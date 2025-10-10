@@ -1,0 +1,12 @@
+# OS/editor
+.DS_Store
+*.swp
+*.swo
+
+# build/artifacts
+build/
+dist/
+*.o
+*.a
+*.so
+*.out
