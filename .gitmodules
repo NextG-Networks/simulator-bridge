@@ -1,0 +1,9 @@
+[submodule "colosseum-near-rt-ric"]
+	path = colosseum-near-rt-ric
+	url = https://github.com/wineslab/colosseum-near-rt-ric
+[submodule "oran-e2sim"]
+	path = oran-e2sim
+	url = https://github.com/wineslab/ns-o-ran-e2-sim
+[submodule "ns-3-mmwave-oran"]
+	path = ns-3-mmwave-oran
+	url = https://github.com/wineslab/ns-o-ran-ns3-mmwave
