@@ -134,6 +134,7 @@ int send_socket(char* buf, size_t payload_size, std::string dest_ip) {
   }
   else {
       std::cout << "Message sent" << std::endl;
+      std::cout << "________________________________________________________________Hej________________________________________________________________" << std::endl;
   }
 
   return 0;

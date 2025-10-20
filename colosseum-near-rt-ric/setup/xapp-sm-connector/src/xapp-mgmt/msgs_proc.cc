@@ -25,7 +25,7 @@
 
 #include "msgs_proc.hpp"
 #include <stdio.h>
-
+// #include "xapp.hpp"
 
 bool XappMsgHandler::encode_subscription_delete_request(unsigned char* buffer, size_t *buf_len){
 
@@ -168,15 +168,18 @@ void XappMsgHandler::operator()(rmr_mbuf_t *message, bool *resend){
 			unsigned char *me_id_null;
 			unsigned char *me_id = rmr_get_meid(message, me_id_null);
 			mdclog_write(MDCLOG_INFO,"RMR Received MEID: %s",me_id);
-
+			
 			process_ric_indication(message->mtype, me_id, message->payload, message->len);
-
+			
+			// if (g_xapp && me_id) {
+            // 	g_xapp->send_test_msg(reinterpret_cast<const char*>(me_id), "hello");
+			// }
 			break;
 		}
 
 		case (RIC_SUB_RESP): {
         		mdclog_write(MDCLOG_INFO, "Received subscription message of type = %d", message->mtype);
-
+				
 				unsigned char *me_id_null;
 				unsigned char *me_id = rmr_get_meid(message, me_id_null);
 				mdclog_write(MDCLOG_INFO,"RMR Received MEID: %s",me_id);

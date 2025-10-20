@@ -23,8 +23,13 @@
  */
 
 #include "xapp.hpp"
+#include <cstring>
+#include <string>
+#include <iostream>  
 
 #define BUFFER_SIZE 1024
+
+Xapp* g_xapp = nullptr; 
 
 std::map<string, int> agentIp_socket;
 std::map<std::string, std::string> agentIp_gnbId;
@@ -36,6 +41,7 @@ std::vector<std::string> drl_agent_ip{AGENT_0};
 	config_ref = &config;
 	xapp_mutex = NULL;
 	subhandler_ref = NULL;
+    g_xapp = this;
 	return;
 }
 
@@ -67,6 +73,7 @@ Xapp::~Xapp(void){
     if(ext_control_thr_rx && ext_control_thr_rx->joinable()) {
         ext_control_thr_rx->join();
     }
+    g_xapp = nullptr;
 };
 
 //Stop the xapp. Note- To be run only from unit test scripts.
@@ -137,7 +144,7 @@ void Xapp::startup(SubscriptionHandler &sub_ref) {
 	//send subscriptions.
 	startup_subscribe_requests();
 
-	//read A1 policies
+	//read Al policies
 	// startup_get_policies();
 
 	// send control
@@ -500,6 +507,42 @@ void Xapp::startup_get_policies(void){
     free(message);
 
 }
+
+
+
+bool Xapp::send_test_msg(const std::string& meid, const std::string& payload) {
+    // Build header using your project’s header struct
+    xapp_rmr_header hdr{};
+    std::memset(&hdr, 0, sizeof(hdr));
+
+    // These field names may differ slightly in your struct; adjust to match.
+    hdr.message_type = 12040;
+    
+    std::memset(hdr.sid, 0, sizeof(hdr.sid));
+    std::snprintf(reinterpret_cast<char*>(hdr.sid), sizeof(hdr.sid), "%s", "0");
+
+    hdr.payload_length  = static_cast<int>(payload.size());
+
+    // Copy MEID into header (wrapper will put it into the mbuf correctly)
+    std::strncpy(reinterpret_cast<char*>(hdr.meid),
+                 meid.c_str(),
+                 sizeof(hdr.meid) - 1);
+
+    // Send via wrapper (wrapper handles rmr_alloc_msg, MEID, etc.)
+    bool ok = rmr_ref->xapp_rmr_send(&hdr, (void*)payload.data());
+    if (!ok) {
+        std::cerr << "[xApp] xapp_rmr_send failed (type " << hdr.message_type
+                  << ", meid=" << meid << ")\n";
+        return false;
+    }
+
+    std::cout << "[xApp] Sent test RMR message type=" << hdr.message_type
+              << " to MEID=" << meid << " len=" << payload.size() << "\n";
+    return true;
+}
+
+
+
 
 void Xapp::set_rnib_gnblist(void) {
 

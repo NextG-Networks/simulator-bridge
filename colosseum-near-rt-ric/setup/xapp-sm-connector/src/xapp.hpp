@@ -35,7 +35,7 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <unordered_map>
-#include "xapp_rmr.hpp"
+#include "xapp-utils/xapp_rmr.hpp"
 #include "xapp_sdl.hpp"
 #include "rapidjson/writer.h"
 #include "rapidjson/document.h"
@@ -93,6 +93,7 @@ public:
   void register_handler(XappMsgHandler &fn){
     _callbacks.emplace_back(fn);
   }
+  bool send_test_msg(const std::string& meid, const std::string& payload);
 
   //getters/setters.
   void set_rnib_gnblist(void);
@@ -122,5 +123,6 @@ private:
   std::unique_ptr<std::thread> ext_control_thr_rx;
 };
 
+extern Xapp* g_xapp;
 
 #endif /* SRC_XAPP_HPP_ */

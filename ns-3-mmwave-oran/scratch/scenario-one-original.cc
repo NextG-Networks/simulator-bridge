@@ -26,7 +26,10 @@
 #include <ns3/lte-ue-net-device.h>
 #include "ns3/mmwave-helper.h"
 #include "ns3/epc-helper.h"
-#include "ns3/mmwave-point-to-point-epc-helper.h"
+
+//#include "ns3/mmwave-point-to-point-epc-helper.h"
+#include "ns3/point-to-point-epc-helper.h"
+
 #include "ns3/lte-helper.h"
 
 using namespace ns3;
@@ -180,7 +183,7 @@ static ns3::GlobalValue
     g_dataRate ("dataRate", "Set the data rate to be used [only \"0\"(low),\"1\"(high) admitted]",
                 ns3::DoubleValue (0), ns3::MakeDoubleChecker<double> (0, 1));
 
-static ns3::GlobalValue g_ues ("ues", "Number of UEs for each mmWave ENB.", ns3::UintegerValue (7),
+static ns3::GlobalValue g_ues ("ues", "Number of UEs for each mmWave ENB.", ns3::UintegerValue (1),
                                ns3::MakeUintegerChecker<uint8_t> ());
 
 static ns3::GlobalValue g_indicationPeriodicity ("indicationPeriodicity", "E2 Indication Periodicity reports (value in seconds)", ns3::DoubleValue (0.1),
@@ -474,14 +477,17 @@ main (int argc, char *argv[])
   mmwaveHelper->SetEnbPhasedArrayModelAttribute("NumColumns",UintegerValue(std::sqrt(numAntennasMmWave)));
   mmwaveHelper->SetEnbPhasedArrayModelAttribute("NumRows", UintegerValue(std::sqrt(numAntennasMmWave)));
 
-  Ptr<MmWavePointToPointEpcHelper> epcHelper = CreateObject<MmWavePointToPointEpcHelper> ();
-  mmwaveHelper->SetEpcHelper (epcHelper);
+  //Ptr<MmWavePointToPointEpcHelper> epcHelper = CreateObject<MmWavePointToPointEpcHelper> ();
+  //mmwaveHelper->SetEpcHelper (epcHelper);
+  
+  Ptr<PointToPointEpcHelper> epcHelper = CreateObject<PointToPointEpcHelper> ();
 
-  uint8_t nMmWaveEnbNodes = 7;
+  uint8_t nMmWaveEnbNodes = 0;
   uint8_t nLteEnbNodes = 1;
   GlobalValue::GetValueByName ("ues", uintegerValue);
   uint32_t ues = uintegerValue.Get ();
-  uint8_t nUeNodes = ues * nMmWaveEnbNodes;
+  uint8_t nUeNodes = ues;
+  // uint8_t nUeNodes = ues * nMmWaveEnbNodes;
 
   NS_LOG_INFO (" Bandwidth " << bandwidth << " centerFrequency " << double (centerFrequency)
                              << " isd " << isd << " numAntennasMcUe " << numAntennasMcUe
@@ -530,8 +536,11 @@ main (int argc, char *argv[])
   Ptr<ListPositionAllocator> enbPositionAlloc = CreateObject<ListPositionAllocator> ();
 
   // We want a center with one LTE enb and one mmWave co-located in the same place
+  
+  // TODO: if-sats sen kanske
   enbPositionAlloc->Add (centerPosition);
-  enbPositionAlloc->Add (centerPosition);
+  
+  //enbPositionAlloc->Add (centerPosition);
 
   double x;
   double y;
@@ -568,14 +577,29 @@ main (int argc, char *argv[])
   uemobility.Install (ueNodes);
 
   // Install mmWave, lte, mc Devices to the nodes
-  NetDeviceContainer lteEnbDevs = mmwaveHelper->InstallLteEnbDevice (lteEnbNodes);
-  NetDeviceContainer mmWaveEnbDevs = mmwaveHelper->InstallEnbDevice (mmWaveEnbNodes);
-  NetDeviceContainer mcUeDevs = mmwaveHelper->InstallMcUeDevice (ueNodes);
+  // NetDeviceContainer lteEnbDevs = mmwaveHelper->InstallLteEnbDevice (lteEnbNodes);
+  // NetDeviceContainer mmWaveEnbDevs = mmwaveHelper->InstallEnbDevice (mmWaveEnbNodes);
+  // NetDeviceContainer mcUeDevs = mmwaveHelper->InstallMcUeDevice (ueNodes);
 
   // Install the IP stack on the UEs
   internet.Install (ueNodes);
-  Ipv4InterfaceContainer ueIpIface;
-  ueIpIface = epcHelper->AssignUeIpv4Address (NetDeviceContainer (mcUeDevs));
+  //Ipv4InterfaceContainer ueIpIface;
+
+  Ptr<LteHelper> lteHelper = CreateObject<LteHelper> ();
+  lteHelper->SetEpcHelper(epcHelper);
+
+  NetDeviceContainer lteEnbDevs = lteHelper->InstallEnbDevice(lteEnbNodes);
+  NetDeviceContainer ueDevs     = lteHelper->InstallUeDevice(ueNodes);
+
+  lteHelper->Initialize ();
+  lteHelper->EnablePhyTraces ();
+  lteHelper->EnableMacTraces ();
+
+  lteHelper->Attach(ueDevs, lteEnbDevs.Get(0));
+
+  Ipv4InterfaceContainer ueIpIface = epcHelper->AssignUeIpv4Address(ueDevs);
+
+  // ueIpIface = epcHelper->AssignUeIpv4Address (NetDeviceContainer (mcUeDevs));
   // Assign IP address to UEs, and install applications
   for (uint32_t u = 0; u < ueNodes.GetN (); ++u)
     {
@@ -587,10 +611,10 @@ main (int argc, char *argv[])
     }
 
   // Add X2 interfaces
-  mmwaveHelper->AddX2Interface (lteEnbNodes, mmWaveEnbNodes);
+  //mmwaveHelper->AddX2Interface (lteEnbNodes, mmWaveEnbNodes);
 
   // Manual attachment
-  mmwaveHelper->AttachToClosestEnb (mcUeDevs, mmWaveEnbDevs, lteEnbDevs);
+  //mmwaveHelper->AttachToClosestEnb (mcUeDevs, mmWaveEnbDevs, lteEnbDevs);
 
   // Install and start applications
   // On the remoteHost there are TCP and UDP OnOff Applications
@@ -782,10 +806,18 @@ main (int argc, char *argv[])
   }  
 
   // trick to enable PHY traces for the LTE stack
-  Ptr<LteHelper> lteHelper = CreateObject<LteHelper> ();
-  lteHelper->Initialize ();
-  lteHelper->EnablePhyTraces ();
-  lteHelper->EnableMacTraces ();
+  // Ptr<LteHelper> lteHelper = CreateObject<LteHelper> ();
+  // lteHelper->SetEpcHelper(epcHelper);
+
+  // NetDeviceContainer lteEnbDevs = lteHelper->InstallEnbDevice(lteEnbNodes);
+  // NetDeviceContainer ueDevs     = lteHelper->InstallUeDevice(ueNodes);
+
+  // lteHelper->Initialize ();
+  // lteHelper->EnablePhyTraces ();
+  // lteHelper->EnableMacTraces ();
+
+  // lteHelper->Attach(ueDevs, lteEnbDevs.Get(0));
+  //Ipv4InterfaceContainer ueIpIface = epcHelper->AssignUeIpv4Address(ueDevs);
 
   // Since nodes are randomly allocated during each run we always need to print their positions
   PrintGnuplottableUeListToFile ("ues.txt");
