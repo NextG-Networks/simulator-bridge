@@ -98,6 +98,10 @@ public:
   void set_rnib_gnblist(void);
   std::vector<std::string> get_rnib_gnblist(){ return rnib_gnblist; }
 
+  // xapp.hpp (inside class Xapp public:)
+  void send_control_text(const std::string& text, const std::string& gnb_id);
+
+
 private:
   void startup_subscribe_requests(void );
   void shutdown_subscribe_deletes(void);

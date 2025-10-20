@@ -72,12 +72,24 @@ int main(int argc, char *argv[]){
 	sleep(1);
 	//Startup E2 subscription and A1 policy
 	//hw_xapp->startup(std::ref(*sub_handler));
+	// auto mp_handler = std::make_unique<XappMsgHandler>(
+    //     config[XappSettings::SettingName::XAPP_ID],
+    //     std::ref(*sub_handler)
+    // );
+	
 
+	sleep(1);
+	
 	//start listener threads and register message handlers.
 	int num_threads = std::stoi(config[XappSettings::SettingName::THREADS]);
 	mdclog_write(MDCLOG_INFO, "Starting Listener Threads. Number of Workers = %d", num_threads);
 
 	std::unique_ptr<XappMsgHandler> mp_handler = std::make_unique<XappMsgHandler>(config[XappSettings::SettingName::XAPP_ID], std::ref(*sub_handler));
+// 	mp_handler->set_control_sender(
+//   [x = hw_xapp.get()](const std::string& text, const std::string& meid) {
+//     x->send_control_text(text, meid);
+//   }
+// );
 	hw_xapp->start_xapp_receiver(std::ref(*mp_handler));
 
 	sleep(1);

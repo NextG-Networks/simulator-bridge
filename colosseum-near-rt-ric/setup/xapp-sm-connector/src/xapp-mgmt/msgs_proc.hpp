@@ -44,13 +44,20 @@
 #include "subs_mgmt.hpp"
 #include "../agent_connector.hpp"
 
+#include <functional>
+
 #define MAX_RMR_RECV_SIZE 2<<15
 
+class Xapp;
 class XappMsgHandler{
+public:
+    using ControlSender = std::function<void(const std::string&, const std::string&)>;
 
 private:
 	std::string xapp_id;
 	SubscriptionHandler *_ref_sub_handler;
+	// std::function<void(const std::string&, const std::string&)> send_ctrl_; // text, meid
+	ControlSender send_ctrl_{};
 public:
 	//constructor for xapp_id.
 	 XappMsgHandler(std::string xid){xapp_id=xid; _ref_sub_handler=NULL;};
@@ -66,6 +73,19 @@ public:
 	 bool a1_policy_handler(char *, int* , a1_policy_helper &);
 
 	 void testfunction() {std::cout << "<<<<<<<<<<<<<<<<<<IN TEST FUNCTION<<<<<<<<<<<<<<<" << std::endl;}
+	//  void set_control_sender(std::function<void(const std::string&, const std::string&)> f) {
+    //     send_ctrl_ = std::move(f);
+    // }
+
+    void set_control_sender(ControlSender f) {
+        if (!f) {
+            mdclog_write(MDCLOG_WARN, "set_control_sender called with empty function");
+        } else {
+            mdclog_write(MDCLOG_INFO, "set_control_sender installed");
+        }
+        send_ctrl_ = std::move(f);
+        mdclog_write(MDCLOG_INFO, "msgs_proc this=%p: control sender set", (void*)this);
+    }
 };
 
 void process_ric_indication(int message_type, transaction_identifier id, const void *message_payload, size_t message_len);

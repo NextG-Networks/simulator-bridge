@@ -39,6 +39,15 @@ std::vector<std::string> drl_agent_ip{AGENT_0};
 	return;
 }
 
+void Xapp::send_control_text(const std::string& text, const std::string& gnb_id) {
+    // ensure null-terminated char* for the existing helper
+    mdclog_write(MDCLOG_INFO, "[CTRL] send_control_text: len=%zu meid=%s", text.size(), gnb_id.c_str());
+    std::vector<char> buf(text.begin(), text.end());
+    buf.push_back('\0');
+    send_ric_control_request(buf.data(), gnb_id);
+}
+
+
 Xapp::~Xapp(void){
 
     //Joining the threads
@@ -162,19 +171,38 @@ void Xapp::Run(){
 }
 
 //Starting a seperate single receiver
-void Xapp::start_xapp_receiver(XappMsgHandler& mp_handler){
-	//start a receiver thread. Can be multiple receiver threads for more than 1 listening port.
-	rmr_ref->set_listen(true);
-	if(xapp_mutex == NULL){
-		xapp_mutex = new std::mutex();
-	}
+// void Xapp::start_xapp_receiver(XappMsgHandler& mp_handler){
+	// //start a receiver thread. Can be multiple receiver threads for more than 1 listening port.
+	// rmr_ref->set_listen(true);
+	// if(xapp_mutex == NULL){
+		// xapp_mutex = new std::mutex();
+	// }
 
-	mdclog_write(MDCLOG_INFO,"Receiver Thread file= %s, line=%d",__FILE__,__LINE__);
-	std::lock_guard<std::mutex> guard(*xapp_mutex);
-	std::thread th_recv([&](){ rmr_ref->xapp_rmr_receive(std::move(mp_handler), rmr_ref);});
-	xapp_rcv_thread.push_back(std::move(th_recv));
-	return;
+	// mdclog_write(MDCLOG_INFO,"Receiver Thread file= %s, line=%d",__FILE__,__LINE__);
+	// std::lock_guard<std::mutex> guard(*xapp_mutex);
+	// std::thread th_recv([&](){ rmr_ref->xapp_rmr_receive(std::move(mp_handler), rmr_ref);});
+	// xapp_rcv_thread.push_back(std::move(th_recv));
+	// return;
+// }
+
+void Xapp::start_xapp_receiver(XappMsgHandler& mp_handler){
+    // Install the control callback before the handler is moved into the thread
+    mp_handler.set_control_sender(
+        [this](const std::string& payload, const std::string& meid){
+            this->send_control_text(payload, meid);
+        }
+    );
+
+    rmr_ref->set_listen(true);
+    if(xapp_mutex == NULL) xapp_mutex = new std::mutex();
+
+    mdclog_write(MDCLOG_INFO,"Receiver Thread file= %s, line=%d",__FILE__,__LINE__);
+    std::lock_guard<std::mutex> guard(*xapp_mutex);
+    std::thread th_recv([&](){ rmr_ref->xapp_rmr_receive(std::move(mp_handler), rmr_ref);});
+    xapp_rcv_thread.push_back(std::move(th_recv));
 }
+
+
 
 void Xapp::shutdown(){
 	return;

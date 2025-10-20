@@ -48,6 +48,7 @@
 
 using namespace std;
 
+class Xapp;
 class TransmitterBase
 {
 public:

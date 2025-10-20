@@ -25,6 +25,7 @@
 
 #include "msgs_proc.hpp"
 #include <stdio.h>
+// #include "xapp.hpp"
 
 
 bool XappMsgHandler::encode_subscription_delete_request(unsigned char* buffer, size_t *buf_len){
@@ -142,6 +143,20 @@ bool  XappMsgHandler::a1_policy_handler(char * message, int *message_len, a1_pol
     return false;
  }
 
+ static void dump_hex_ascii(const void* data, size_t len) {
+    auto* p = static_cast<const uint8_t*>(data);
+    std::string ascii;
+    for (size_t i = 0; i < len; ++i) {
+        if (i % 16 == 0) {
+            if (!ascii.empty()) { mdclog_write(MDCLOG_INFO, "    %s", ascii.c_str()); ascii.clear(); }
+            mdclog_write(MDCLOG_INFO, "%04zx: ", i);
+        }
+        mdclog_write(MDCLOG_INFO, "%02x ", p[i]);
+        ascii.push_back((p[i] >= 32 && p[i] <= 126) ? char(p[i]) : '.');
+    }
+    if (!ascii.empty()) mdclog_write(MDCLOG_INFO, "    %s", ascii.c_str());
+}
+
 
 //For processing received messages.XappMsgHandler should mention if resend is required or not.
 void XappMsgHandler::operator()(rmr_mbuf_t *message, bool *resend){
@@ -170,7 +185,18 @@ void XappMsgHandler::operator()(rmr_mbuf_t *message, bool *resend){
 			mdclog_write(MDCLOG_INFO,"RMR Received MEID: %s",me_id);
 
 			process_ric_indication(message->mtype, me_id, message->payload, message->len);
+			// --- send back data via xapp.cc ---
+			// dump_hex_ascii(message->payload, message->len);
 
+			mdclog_write(MDCLOG_INFO, "[HOOK] checking send_ctrl_");
+			
+			if (send_ctrl_) {
+				std::string meid_str(reinterpret_cast<char*>(me_id));
+				mdclog_write(MDCLOG_INFO, "[HOOK] about to send control to %s", meid_str.c_str());
+				send_ctrl_("{\"control\":\"ack from xApp\", \"message\":\"I HAVE MADE MESSAGE BACK\"}", meid_str);
+			} else {
+				mdclog_write(MDCLOG_WARN, "[HOOK] send_ctrl_ not set; call set_control_sender() before processing messages (this=%p)", (void*)this);
+			}
 			break;
 		}
 
