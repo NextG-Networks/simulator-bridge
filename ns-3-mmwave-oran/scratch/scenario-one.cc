@@ -16,7 +16,7 @@
  * Authors: Andrea Lacava <thecave003@gmail.com>
  *          Michele Polese <michele.polese@gmail.com>
  */
-
+#include <fstream>
 #include "ns3/core-module.h"
 #include "ns3/network-module.h"
 #include "ns3/internet-module.h"
@@ -28,9 +28,11 @@
 #include "ns3/epc-helper.h"
 #include "ns3/mmwave-point-to-point-epc-helper.h"
 #include "ns3/lte-helper.h"
+#include <filesystem>
 
 using namespace ns3;
 using namespace mmwave;
+namespace fs = std::filesystem;
 
 /**
  * Scenario One
@@ -235,11 +237,18 @@ static ns3::GlobalValue g_maxSpeed ("maxSpeed",
                                            ns3::DoubleValue (4.0),
                                            ns3::MakeDoubleChecker<double> ());
 
+
+
 int
 main (int argc, char *argv[])
 {
   // std::freopen("stdout.txt", "a", stdout);
   // std::freopen("stderr.txt", "a", stderr);
+
+  
+
+  fs::path outDir = "out/logs";
+  fs::create_directories(outDir);
 
   LogComponentEnableAll (LOG_PREFIX_ALL);
   // LogComponentEnable ("PacketSink", LOG_LEVEL_ALL);
@@ -276,6 +285,8 @@ main (int argc, char *argv[])
   BooleanValue booleanValue;
   StringValue stringValue;
   DoubleValue doubleValue;
+
+
 
   GlobalValue::GetValueByName ("hoSinrDifference", doubleValue);
   double hoSinrDifference = doubleValue.Get ();
@@ -788,8 +799,8 @@ main (int argc, char *argv[])
   lteHelper->EnableMacTraces ();
 
   // Since nodes are randomly allocated during each run we always need to print their positions
-  PrintGnuplottableUeListToFile ("ues.txt");
-  PrintGnuplottableEnbListToFile ("enbs.txt");
+  PrintGnuplottableUeListToFile ((outDir /"ues.txt").string());
+  PrintGnuplottableEnbListToFile ((outDir /"enbs.txt").string());
 
   bool run = true;
   if (run)
