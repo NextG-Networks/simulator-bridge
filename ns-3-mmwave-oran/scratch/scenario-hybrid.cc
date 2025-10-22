@@ -80,7 +80,7 @@ int main (int argc, char** argv)
 
   // Nodes
   NodeContainer gnb; gnb.Create(1);
-  NodeContainer ue;  ue.Create(1);
+  NodeContainer ue;  ue.Create(3);
   NodeContainer rh;  rh.Create(1); // remote host
 
   // Internet stacks
