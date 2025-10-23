@@ -20,7 +20,6 @@ OUT.mkdir(parents=True, exist_ok=True)
 with open(SCEN, "r") as f:
     scen_cfg_raw = json.load(f)
 
-
 env = TrafficSteeringEnv(
     ns3_path=str(NS3_PATH),
     scenario_configuration=scen_cfg_raw,
@@ -28,6 +27,7 @@ env = TrafficSteeringEnv(
     verbose=True,
     optimized=False   # or True, if you intend to run the optimized ns-3 path
 )
+
 
 print("obs_space:", env.observation_space, "action_space:", env.action_space)
 obs, info = env.reset()

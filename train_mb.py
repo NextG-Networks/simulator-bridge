@@ -7,12 +7,11 @@ sys.path.insert(0, str(ROOT / "ns-o-ran-gym" / "src"))
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
-from environments.ts_env import TrafficSteeringEnv
-
+from environments.mb_env import RadioResourceEnv
 
 NS3_PATH = ROOT / "ns-3-mmwave-oran"
 
-SCEN = ROOT / "ns-o-ran-gym" / "src" / "environments" / "scenario_configurations" / "ts_use_case.json"
+SCEN = ROOT / "ns-o-ran-gym" / "src" / "environments" / "scenario_configurations" / "mb_use_case.json"
 
 OUT = ROOT / "out_ts"
 OUT.mkdir(parents=True, exist_ok=True)
@@ -21,12 +20,13 @@ with open(SCEN, "r") as f:
     scen_cfg_raw = json.load(f)
 
 
-env = TrafficSteeringEnv(
+env = RadioResourceEnv(  
     ns3_path=str(NS3_PATH),
     scenario_configuration=scen_cfg_raw,
     output_folder=str(OUT),
     verbose=True,
-    optimized=False   # or True, if you intend to run the optimized ns-3 path
+    optimized=False,
+    power_cost_factor=0.1
 )
 
 print("obs_space:", env.observation_space, "action_space:", env.action_space)
