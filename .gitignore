@@ -168,3 +168,5 @@ output/*
 time.csv
 *.pdf
 *.pgf
+
+out_ts/

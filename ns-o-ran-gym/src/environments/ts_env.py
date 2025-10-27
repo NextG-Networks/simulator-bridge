@@ -2,16 +2,23 @@ from nsoran.ns_env import NsOranEnv
 from gymnasium import spaces
 import logging
 import numpy as np
+import os
+from pathlib import Path
 
 class TrafficSteeringEnv(NsOranEnv):
     def __init__(self, ns3_path: str, scenario_configuration: dict, output_folder: str,
-                 optimized: bool, verbose=False, time_factor=0.001, Cf=1.0, lambdaf=0.1):
+                 optimized: bool, verbose=False, time_factor=0.001, Cf=1.0, lambdaf=0.1,
+                 control_file: str = None):
         """Environment specific parameters:
             verbose (bool): enables logging
             time_factor (float): applies conversion from seconds to another multiple (eg. ms). See compute_reward
             Cf (float): Cost factor for handovers. See compute_reward
             lambdaf (float): Decay factor for handover cost. See compute_reward
         """
+        cf = control_file or scenario_configuration.get("controlFileName", "xapp_actions.csv")
+        if isinstance(cf, list):
+            cf = cf[0]
+        cf_abs = str(Path(cf).resolve())
         super().__init__(
             ns3_path=ns3_path,
             scenario='scenario-one',
@@ -20,7 +27,7 @@ class TrafficSteeringEnv(NsOranEnv):
             optimized=optimized,
             control_header=['timestamp', 'ueId', 'nrCellId'],
             log_file='TsActions.txt',
-            control_file='ts_actions_for_ns3.csv'
+            control_file=cf_abs
         )
 
         # === Topology params ===
