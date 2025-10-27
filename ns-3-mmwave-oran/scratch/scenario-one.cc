@@ -34,13 +34,18 @@
 using namespace ns3;
 using namespace mmwave;
 namespace fs = std::filesystem;
+NS_LOG_COMPONENT_DEFINE ("ScenarioOne");
+/**----------------------------------------------------------------------------- */
 
+
+
+
+/**----------------------------------------------------------------------------- */
 /**
  * Scenario One
  * 
  */
 
-NS_LOG_COMPONENT_DEFINE ("ScenarioOne");
 
 void
 PrintGnuplottableUeListToFile (std::string filename)
@@ -226,7 +231,7 @@ static ns3::GlobalValue q_useSemaphores ("useSemaphores", "If true, enables the 
                                         ns3::BooleanValue (false), ns3::MakeBooleanChecker ());
 
 static ns3::GlobalValue g_controlFileName ("controlFileName", "The path to the control file (can be absolute)",
-                                     ns3::StringValue ("ts_actions_for_ns3.csv"), ns3::MakeStringChecker ());
+                                     ns3::StringValue ("xapp_actions.csv"), ns3::MakeStringChecker ());
 
 static ns3::GlobalValue g_minSpeed ("minSpeed",
                                            "minimum UE speed in m/s",
@@ -583,7 +588,10 @@ main (int argc, char *argv[])
   NetDeviceContainer lteEnbDevs = mmwaveHelper->InstallLteEnbDevice (lteEnbNodes);
   NetDeviceContainer mmWaveEnbDevs = mmwaveHelper->InstallEnbDevice (mmWaveEnbNodes);
   NetDeviceContainer mcUeDevs = mmwaveHelper->InstallMcUeDevice (ueNodes);
+/**---------------------------------------------------------- */
+ 
 
+/**---------------------------------------------------------- */
   // Install the IP stack on the UEs
   internet.Install (ueNodes);
   Ipv4InterfaceContainer ueIpIface;

@@ -291,7 +291,6 @@ int main (int argc, char** argv)
   filename += time_buffer; 
   filename += ".xml";      
   AnimationInterface anim(filename.c_str());
-  // AnimationInterface anim("NetAnimFile_2.xml");
 
 
   Simulator::Stop(Seconds(simTime));
