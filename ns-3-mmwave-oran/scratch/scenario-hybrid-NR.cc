@@ -1,4 +1,3 @@
-
 /* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 #include "ns3/core-module.h"
 #include "ns3/network-module.h"
@@ -6,15 +5,13 @@
 #include "ns3/mobility-module.h"
 #include "ns3/applications-module.h"
 #include "ns3/point-to-point-helper.h"
-#include "ns3/mmwave-helper.h"
-#include "ns3/mmwave-point-to-point-epc-helper.h"
-#include "ns3/mmwave-ue-net-device.h"
-#include "ns3/mmwave-enb-net-device.h"
+#include "ns3/nr-module.h"
 #include "ns3/v4ping-helper.h"
 #include "ns3/v4ping.h"
 #include "ns3/packet-sink-helper.h"
 #include "ns3/packet-sink.h"
 #include "ns3/netanim-module.h"
+
 
 #include <filesystem>
 #include <fstream>
@@ -23,10 +20,10 @@
 #include <ctime>
 
 using namespace ns3;
-using namespace mmwave;
+using namespace ns3::nr;
 namespace fs = std::filesystem;
 
-NS_LOG_COMPONENT_DEFINE("MVS_Mmwave_1gNB_1UE");
+NS_LOG_COMPONENT_DEFINE("MVS_Nr_1gNB_1UE");
 
 // ---------------- Runtime flags ----------------
 static GlobalValue g_simTime("simTime", "Simulation time (s)",
@@ -96,7 +93,8 @@ static void SampleAll(const NodeContainer &ueNodes,
     f << ",throughput_ue0_mbps"
       << ",throughput_ue0_ewma"
       << ",ping_ms"
-      << "\n";
+      << "
+";
     headerDone = true;
   }
 
@@ -109,7 +107,7 @@ static void SampleAll(const NodeContainer &ueNodes,
     const double dx = p.x - gp.x, dy = p.y - gp.y, dz = p.z - gp.z;
     const double dist = std::sqrt(dx*dx + dy*dy + dz*dz);
     const int inside = (dist <= covRadius ? 1 : 0);
-    uint64_t imsi = ueDevs.Get(i)->GetObject<MmWaveUeNetDevice>()->GetImsi();
+    uint64_t imsi = ueDevs.Get(i)->GetObject<NrUeNetDevice>()->GetImsi();
 
     f << "," << imsi
       << "," << p.x
@@ -139,7 +137,8 @@ static void SampleAll(const NodeContainer &ueNodes,
   f << "," << mbps
     << "," << gS.ewma
     << "," << pingMs
-    << "\n";
+    << "
+";
   f.flush();
 
   Simulator::Schedule(Seconds(periodSec), &SampleAll,
@@ -155,7 +154,8 @@ static void SamplePositions(NodeContainer ueNodes,
   static std::ofstream f("ue_positions.csv", std::ios::out | std::ios::trunc);
   static bool header = false;
   if (!header) {
-    f << "time_s,ue_index,imsi,x,y,z,dist_to_gnb_m\n";
+    f << "time_s,ue_index,imsi,x,y,z,dist_to_gnb_m
+";
     header = true;
   }
 
@@ -166,8 +166,9 @@ static void SamplePositions(NodeContainer ueNodes,
     Vector p = ueNodes.Get(i)->GetObject<MobilityModel>()->GetPosition();
     double dx = p.x - gp.x, dy = p.y - gp.y, dz = p.z - gp.z;
     double dist = std::sqrt(dx*dx + dy*dy + dz*dz);
-    uint64_t imsi = ueDevs.Get(i)->GetObject<MmWaveUeNetDevice>()->GetImsi();
-    f << t << "," << i << "," << imsi << "," << p.x << "," << p.y << "," << p.z << "," << dist << "\n";
+    uint64_t imsi = ueDevs.Get(i)->GetObject<NrUeNetDevice>()->GetImsi();
+    f << t << "," << i << "," << imsi << "," << p.x << "," << p.y << "," << p.z << "," << dist << "
+";
   }
   f.flush();
   Simulator::Schedule(Seconds(periodSec), &SamplePositions, ueNodes, ueDevs, gnbNode, periodSec);
@@ -210,29 +211,38 @@ int main (int argc, char** argv)
   bool enableE2FileLogging = booleanValue.Get ();
 
   // RF/system defaults like your first file (optional but handy)
-  Config::SetDefault("ns3::MmWavePhyMacCommon::CenterFreq", DoubleValue(28e9));
-  Config::SetDefault("ns3::MmWavePhyMacCommon::Bandwidth",  DoubleValue(100e6));
-  Config::SetDefault("ns3::MmWaveEnbPhy::TxPower",          DoubleValue(23.0));
+  Config::SetDefault("ns3::NrPhyMacCommon::CenterFreq", DoubleValue(3.5e9));
+  Config::SetDefault("ns3::NrPhyMacCommon::Bandwidth",  DoubleValue(56e6));
+  Config::SetDefault("ns3::NrEnbPhy::TxPower",          DoubleValue(23.0));
+  Config::SetDefault ("ns3::NrPhyMacCommon::SubcarrierSpacing", UintegerValue (30));
+
+  Config::SetDefault ("ns3::NrEnbPhy::NumTxAntennas", UintegerValue (2));
+  Config::SetDefault ("ns3::NrEnbPhy::NumRxAntennas", UintegerValue (2));
+
+  Config::SetDefault ("ns3::NrUePhy::NumTxAntennas", UintegerValue (2));
+  Config::SetDefault ("ns3::NrUePhy::NumRxAntennas", UintegerValue (2));
 
   // E2 config
-  Config::SetDefault ("ns3::MmWaveHelper::E2ModeLte", BooleanValue(e2lteEnabled));
-  Config::SetDefault ("ns3::MmWaveHelper::E2ModeNr", BooleanValue(e2nrEnabled));
-  Config::SetDefault ("ns3::MmWaveHelper::E2Periodicity", DoubleValue (indicationPeriodicity));
-  Config::SetDefault ("ns3::MmWaveHelper::E2TermIp", StringValue (e2TermIp));
-  Config::SetDefault ("ns3::MmWaveEnbNetDevice::E2Periodicity", DoubleValue (indicationPeriodicity));
-  Config::SetDefault ("ns3::MmWaveEnbNetDevice::EnableDuReport", BooleanValue(e2du));
-  Config::SetDefault ("ns3::MmWaveEnbNetDevice::EnableCuUpReport", BooleanValue(e2cuUp));
-  Config::SetDefault ("ns3::MmWaveEnbNetDevice::EnableCuCpReport", BooleanValue(e2cuCp));
-  Config::SetDefault ("ns3::MmWaveEnbNetDevice::EnableE2FileLogging", BooleanValue (enableE2FileLogging));
+  Config::SetDefault ("ns3::NrHelper::ChannelModel", StringValue ("ns3::Nr3gppChannel"));
+  Config::SetDefault ("ns3::Nr3gppChannel::Scenario", StringValue ("Umi"));
+  Config::SetDefault ("ns3::NrHelper::E2ModeLte", BooleanValue(e2lteEnabled));
+  Config::SetDefault ("ns3::NrHelper::E2ModeNr", BooleanValue(e2nrEnabled));
+  Config::SetDefault ("ns3::NrHelper::E2Periodicity", DoubleValue (indicationPeriodicity));
+  Config::SetDefault ("ns3::NrHelper::E2TermIp", StringValue (e2TermIp));
+  Config::SetDefault ("ns3::NrEnbNetDevice::E2Periodicity", DoubleValue (indicationPeriodicity));
+  Config::SetDefault ("ns3::NrEnbNetDevice::EnableDuReport", BooleanValue(e2du));
+  Config::SetDefault ("ns3::NrEnbNetDevice::EnableCuUpReport", BooleanValue(e2cuUp));
+  Config::SetDefault ("ns3::NrEnbNetDevice::EnableCuCpReport", BooleanValue(e2cuCp));
+  Config::SetDefault ("ns3::NrEnbNetDevice::EnableE2FileLogging", BooleanValue (enableE2FileLogging));
 
   // Output dir
   fs::create_directories(outDir);
   fs::current_path(outDir);
 
   // Helpers
-  Ptr<MmWaveHelper> mmw = CreateObject<MmWaveHelper>();
-  Ptr<MmWavePointToPointEpcHelper> epc = CreateObject<MmWavePointToPointEpcHelper>();
-  mmw->SetEpcHelper(epc);
+  Ptr<NrHelper> nr = CreateObject<NrHelper>();
+  Ptr<NrPointToPointEpcHelper> epc = CreateObject<NrPointToPointEpcHelper>();
+  nr->SetEpcHelper(epc);
   Ptr<Node> pgw = epc->GetPgwNode();
 
   // Nodes
@@ -284,8 +294,8 @@ int main (int argc, char** argv)
   }
 
   // Devices
-  NetDeviceContainer gnbDevs = mmw->InstallEnbDevice(gnb);
-  NetDeviceContainer ueDevs  = mmw->InstallUeDevice(ue);
+  NetDeviceContainer gnbDevs = nr->InstallEnbDevice(gnb);
+  NetDeviceContainer ueDevs  = nr->InstallUeDevice(ue);
 
   // (Optional) your simple per-UE position CSV
   SamplePositions(ue, ueDevs, gnb.Get(0), 0.5);
@@ -299,7 +309,7 @@ int main (int argc, char** argv)
   }
 
   // Attach UE
-  mmw->AttachToClosestEnb(ueDevs, gnbDevs);
+  nr->AttachToClosestEnb(ueDevs, gnbDevs);
 
   // Backhaul: PGW <-> RemoteHost
   PointToPointHelper p2p;
@@ -334,8 +344,8 @@ int main (int argc, char** argv)
   Ptr<V4Ping> pingApp = DynamicCast<V4Ping>(p.Get(0));
   pingApp->TraceConnectWithoutContext("Rtt", MakeCallback(&PingRttCallback));
 
-  // mmWave traces
-  mmw->EnableTraces();
+  // nr traces
+  nr->EnableTraces();
 
   // Start the unified sampler (every 0.1 s) — adjust radius as you like
   const double covRadius = 100.0;
@@ -348,12 +358,14 @@ int main (int argc, char** argv)
     std::ofstream ues("ues.txt"), enbs("enbs.txt");
     Ptr<MobilityModel> mm = ue.Get(0)->GetObject<MobilityModel>();
     Vector up = mm->GetPosition();
-    ues  << "UE IMSI " << ueDevs.Get(0)->GetObject<MmWaveUeNetDevice>()->GetImsi()
-         << " " << up.x << " " << up.y << "\n";
+    ues  << "UE IMSI " << ueDevs.Get(0)->GetObject<NrUeNetDevice>()->GetImsi()
+         << " " << up.x << " " << up.y << "
+";
     Ptr<MobilityModel> em = gnb.Get(0)->GetObject<MobilityModel>();
     Vector ep = em->GetPosition();
-    enbs << "gNB CellId " << gnbDevs.Get(0)->GetObject<MmWaveEnbNetDevice>()->GetCellId()
-         << " " << ep.x << " " << ep.y << "\n";
+    enbs << "gNB CellId " << gnbDevs.Get(0)->GetObject<NrEnbNetDevice>()->GetCellId()
+         << " " << ep.x << " " << ep.y << "
+";
   }
 
   // Timestamped NetAnim file
