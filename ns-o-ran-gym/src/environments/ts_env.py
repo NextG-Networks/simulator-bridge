@@ -15,20 +15,28 @@ class TrafficSteeringEnv(NsOranEnv):
             Cf (float): Cost factor for handovers. See compute_reward
             lambdaf (float): Decay factor for handover cost. See compute_reward
         """
+        print("Initializing TrafficSteeringEnv...")
         cf = control_file or scenario_configuration.get("controlFileName", "xapp_actions.csv")
         if isinstance(cf, list):
             cf = cf[0]
         cf_abs = str(Path(cf).resolve())
+        print( "Using control file at:", cf_abs)
         super().__init__(
             ns3_path=ns3_path,
             scenario='scenario-one',
             scenario_configuration=scenario_configuration,
             output_folder=output_folder,
             optimized=optimized,
-            control_header=['timestamp', 'ueId', 'nrCellId'],
+            control_header=["timestamp","type","scope","ueId","cellId","sliceId",
+            "policy","policy_params",
+            "dl_mcs_min","dl_mcs_max","ul_mcs_min","ul_mcs_max",
+            "prb_weight","slice_weight","gbr_bps","mbr_bps",
+            "granularity_period_ms","enable_ue_level"],
             log_file='TsActions.txt',
             control_file=cf_abs
         )
+
+        # print("Using control file at:", cf_abs)
 
         # === Topology params ===
         # Default to 7 (original paper setup), but allow overriding from scenario JSON.

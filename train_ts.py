@@ -21,15 +21,17 @@ SCEN = ROOT / "ns-o-ran-gym" / "src" / "environments" / "scenario_configurations
 OUT = ROOT / "out_ts"
 OUT.mkdir(parents=True, exist_ok=True)
 CONTROL_ABS = str((OUT / "xapp_actions.csv").resolve())
+Path(CONTROL_ABS).parent.mkdir(parents=True, exist_ok=True)
 
-def wait_for_kpms(env, cols, min_rows=1, timeout_s=5.0, poll_s=0.05):
-    t0 = time.time()
-    while time.time() - t0 < timeout_s:
-        rows = env.datalake.read_kpms(env.last_timestamp, cols) or []
-        if len(rows) >= min_rows:
-            return rows
-        time.sleep(poll_s)
-    return []
+print("CONTROL_ABS:", CONTROL_ABS)
+# def wait_for_kpms(env, cols, min_rows=1, timeout_s=5.0, poll_s=0.05):
+#     t0 = time.time()
+#     while time.time() - t0 < timeout_s:
+#         rows = env.datalake.read_kpms(env.last_timestamp, cols) or []
+#         if len(rows) >= min_rows:
+#             return rows
+#         time.sleep(poll_s)
+#     return []
 
 with open(SCEN, "r") as f:
     scen_cfg_raw = json.load(f)
@@ -55,35 +57,45 @@ env = TrafficSteeringEnv(
     verbose=True,
     optimized=False   # or True, if you intend to run the optimized ns-3 path
 )
+print("env.optimized:", env.optimized)
 
-env.control_file = CONTROL_ABS  # override if needed
 
+def mark_simulation_boundary(control_file, msg="--- NEW RUN ---"):
+    p = Path(control_file)
+    with p.open("a") as f:
+        f.write(f"# {msg}\n")  # comment line (won’t confuse CSV readers if you skip '#' lines)
+
+# env.control_file = CONTROL_ABS  # override if needed
+# env = TrafficSteeringEnv()
+mark_simulation_boundary(env.control_file, "START RUN")
 print("obs_space:", env.observation_space, "action_space:", env.action_space)
 obs, info = env.reset()
 
-cols = ['DRB.UEThpDl.UEID', 'nrCellId']
-baseline = wait_for_kpms(env, cols, min_rows=1, timeout_s=3.0)
-if not baseline:
-    raise RuntimeError("No KPIs produced after reset; increase simTime or check NS-3 run.")
+# cols = ['DRB.UEThpDl.UEID', 'nrCellId']
+# baseline = wait_for_kpms(env, cols, min_rows=1, timeout_s=3.0)
+# if not baseline:
+#     raise RuntimeError("No KPIs produced after reset; increase simTime or check NS-3 run.")
 
 # Seed the reward state so _compute_reward() won’t zip None
-env.previous_kpms = baseline
-env.previous_timestamp = env.last_timestamp
+# env.previous_kpms = baseline
+# env.previous_timestamp = env.last_timestamp
 
 #baseline = env.datalake.read_kpms(env.last_timestamp, ['DRB.UEThpDl.UEID', 'nrCellId'])
-forced = np.ones(env.action_space.shape, dtype=int)
+# forced = np.ones(env.action_space.shape, dtype=int)
 
-after = wait_for_kpms(env, cols, min_rows=1, timeout_s=3.0)
+# after = wait_for_kpms(env, cols, min_rows=1, timeout_s=3.0)
 
 #after = env.datalake.read_kpms(env.last_timestamp, ['DRB.UEThpDl.UEID', 'nrCellId'])
 
-print("Baseline KPIs:", baseline[:3])
-print("After-step KPIs:", after[:3])
+# print("Baseline KPIs:", baseline[:3])
+# print("After-step KPIs:", after[:3])
 
-obs, reward, terminated, truncated, info = env.step(forced)
+# obs, reward, terminated, truncated, info = env.step(forced)
 
 #Flush to disk immediately (the env writes control CSV under env.sim_path)
 #env.datalake.flush() if hasattr(env, "datalake") else None
+
+
 
 print("SIM_PATH", env.sim_path)
 print("xapp_actions target:", os.path.join(env.sim_path, "xapp_actions.csv"))
@@ -94,5 +106,9 @@ print("reset OK; obs type/shape:", type(obs), getattr(obs, "shape", None))
 # BLACKBOX
 model = PPO("MlpPolicy", env, verbose=1, n_steps=1024, batch_size=64, gamma=0.99)
 model.learn(total_timesteps=10_000)
+print("Learning OK.")
 model.save(str(OUT / "ppo_ts_policy"))
+print("Learning complete.")
+mark_simulation_boundary(env.control_file, "END RUN")
 env.close()
+print("Environment closed.")

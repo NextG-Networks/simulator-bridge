@@ -29,7 +29,7 @@
 #include "ns3/mmwave-point-to-point-epc-helper.h"
 #include "ns3/lte-helper.h"
 #include <filesystem>
-#include "ns3/netanim-module.h"
+// #include "ns3/netanim-module.h"
 
 using namespace ns3;
 using namespace mmwave;
@@ -231,7 +231,7 @@ static ns3::GlobalValue q_useSemaphores ("useSemaphores", "If true, enables the 
                                         ns3::BooleanValue (false), ns3::MakeBooleanChecker ());
 
 static ns3::GlobalValue g_controlFileName ("controlFileName", "The path to the control file (can be absolute)",
-                                     ns3::StringValue ("xapp_actions.csv"), ns3::MakeStringChecker ());
+                                     ns3::StringValue ("/home/hybrid/proj/out_ts/xapp_actions.csv"), ns3::MakeStringChecker ());
 
 static ns3::GlobalValue g_minSpeed ("minSpeed",
                                            "minimum UE speed in m/s",
@@ -497,7 +497,7 @@ main (int argc, char *argv[])
   uint8_t nMmWaveEnbNodes = 7;
   uint8_t nLteEnbNodes = 1;
   GlobalValue::GetValueByName ("ues", uintegerValue);
-  uint32_t ues = uintegerValue.Get ();
+  uint32_t ues = uintegerValue.Get();
   uint8_t nUeNodes = ues * nMmWaveEnbNodes;
 
   NS_LOG_INFO (" Bandwidth " << bandwidth << " centerFrequency " << double (centerFrequency)
@@ -811,7 +811,7 @@ main (int argc, char *argv[])
   PrintGnuplottableUeListToFile ((outDir /"ues.txt").string());
   PrintGnuplottableEnbListToFile ((outDir /"enbs.txt").string());
 
-  AnimationInterface anim("NetAnimFile.xml");
+  // AnimationInterface anim("NetAnimFile.xml");
 
   bool run = true;
   if (run)
