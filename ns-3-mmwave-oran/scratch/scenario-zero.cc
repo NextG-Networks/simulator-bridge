@@ -33,6 +33,11 @@
 #include "ns3/trace-helper.h"
 #include <cmath>
 
+#include "ns3/mobility-helper.h"
+#include "ns3/mobility-model.h"
+#include "ns3/vector.h"
+
+
 using namespace ns3;
 using namespace mmwave;
 
@@ -581,9 +586,74 @@ main (int argc, char *argv[])
   PrintGnuplottableUeListToFile ("ues.txt");
   PrintGnuplottableEnbListToFile ("enbs.txt");
 
+  // Install ConstantPositionMobilityModel on eNB/gNB nodes
+  ns3::MobilityHelper enbMob;
+  enbMob.SetMobilityModel("ns3::ConstantPositionMobilityModel");
+  enbMob.Install(lteEnbNodes);     // if you have LTE eNBs
+  enbMob.Install(mmWaveEnbNodes);  // if you have NR gNBs
+
+  // Install ConstantPositionMobilityModel on UEs too (optional but handy)
+  ns3::MobilityHelper ueMob;
+  ueMob.SetMobilityModel("ns3::ConstantPositionMobilityModel");
+  ueMob.Install(ueNodes);
+
+  // Simple grid for gNBs (Z=10m so they’re “towers”)
+for (uint32_t i = 0; i < mmWaveEnbNodes.GetN(); ++i) {
+  Ptr<ns3::MobilityModel> mm = mmWaveEnbNodes.Get(i)->GetObject<ns3::MobilityModel>();
+  if (mm) {
+    ns3::Vector p(50.0 * i, 0.0, 10.0);
+    mm->SetPosition(p);
+  }
+}
+
+// Simple line for LTE eNBs
+for (uint32_t i = 0; i < lteEnbNodes.GetN(); ++i) {
+  Ptr<ns3::MobilityModel> mm = lteEnbNodes.Get(i)->GetObject<ns3::MobilityModel>();
+  if (mm) {
+    ns3::Vector p(0.0, 50.0 * i, 10.0);
+    mm->SetPosition(p);
+  }
+}
+
+// UEs near origin
+for (uint32_t i = 0; i < ueNodes.GetN(); ++i) {
+  Ptr<ns3::MobilityModel> mm = ueNodes.Get(i)->GetObject<ns3::MobilityModel>();
+  if (mm) {
+    ns3::Vector p(5.0 * i, 10.0, 1.5);
+    mm->SetPosition(p);
+  }
+}
+
+
+  Simulator::Schedule(Seconds(1.0), []{
+  Ptr<Node> n = NodeList::GetNode(0);
+  Vector p = n->GetObject<MobilityModel>()->GetPosition();
+  std::cerr << "[SCENARIO] Node0 pos now: (" << p.x << ", " << p.y << ")\n";
+  });
+
+std::cerr << "\n=== Node IDs by container ===\n";
+
+for (uint32_t i = 0; i < mmWaveEnbNodes.GetN(); ++i) {
+  std::cerr << "gNB[" << i << "] nodeId=" << mmWaveEnbNodes.Get(i)->GetId() << "\n";
+}
+for (uint32_t i = 0; i < lteEnbNodes.GetN(); ++i) {
+  std::cerr << "LTE eNB[" << i << "] nodeId=" << lteEnbNodes.Get(i)->GetId() << "\n";
+}
+for (uint32_t i = 0; i < ueNodes.GetN(); ++i) {
+  std::cerr << "UE[" << i << "] nodeId=" << ueNodes.Get(i)->GetId() << "\n";
+}
+std::cerr << "=============================\n\n";
+
   bool run = true;
   if (run)
     {
+      std::time_t t = std::time(nullptr);
+      std::tm tm = *std::localtime(&t);
+      char time_buffer[80];
+      std::strftime(time_buffer, sizeof(time_buffer), "%Y-%m-%d%H-%M-%S", &tm);
+      std::string filename = std::string("NetAnimFile_") + time_buffer + ".xml";
+      AnimationInterface anim(filename.c_str());
+
       NS_LOG_UNCOND ("Simulation time is " << simTime << " seconds ");
       Simulator::Stop (Seconds (simTime));
       NS_LOG_INFO ("Run Simulation.");

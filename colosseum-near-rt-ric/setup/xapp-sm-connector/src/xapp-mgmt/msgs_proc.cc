@@ -193,7 +193,7 @@ void XappMsgHandler::operator()(rmr_mbuf_t *message, bool *resend){
 			if (send_ctrl_) {
 				std::string meid_str(reinterpret_cast<char*>(me_id));
 				mdclog_write(MDCLOG_INFO, "[HOOK] about to send control to %s", meid_str.c_str());
-				send_ctrl_("{\"control\":\"ack from xApp\", \"message\":\"I HAVE MADE MESSAGE BACK\"}", meid_str);
+				send_ctrl_(R"({"cmd":"move-enb","node":3,"x":50.0,"y":0.0})", "gnb:131-133-31000000");
 			} else {
 				mdclog_write(MDCLOG_WARN, "[HOOK] send_ctrl_ not set; call set_control_sender() before processing messages (this=%p)", (void*)this);
 			}
