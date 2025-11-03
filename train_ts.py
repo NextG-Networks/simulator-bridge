@@ -24,14 +24,14 @@ CONTROL_ABS = str((OUT / "xapp_actions.csv").resolve())
 Path(CONTROL_ABS).parent.mkdir(parents=True, exist_ok=True)
 
 print("CONTROL_ABS:", CONTROL_ABS)
-# def wait_for_kpms(env, cols, min_rows=1, timeout_s=5.0, poll_s=0.05):
-#     t0 = time.time()
-#     while time.time() - t0 < timeout_s:
-#         rows = env.datalake.read_kpms(env.last_timestamp, cols) or []
-#         if len(rows) >= min_rows:
-#             return rows
-#         time.sleep(poll_s)
-#     return []
+def wait_for_kpms(env, cols, min_rows=1, timeout_s=5.0, poll_s=0.05):
+    t0 = time.time()
+    while time.time() - t0 < timeout_s:
+        rows = env.datalake.read_kpms(env.last_timestamp, cols) or []
+        if len(rows) >= min_rows:
+            return rows
+        time.sleep(poll_s)
+    return []
 
 with open(SCEN, "r") as f:
     scen_cfg_raw = json.load(f)
@@ -55,7 +55,7 @@ env = TrafficSteeringEnv(
     scenario_configuration=scen_cfg_raw,
     output_folder=str(OUT),
     verbose=True,
-    optimized=False   # or True, if you intend to run the optimized ns-3 path
+    optimized=False
 )
 print("env.optimized:", env.optimized)
 
@@ -71,8 +71,8 @@ mark_simulation_boundary(env.control_file, "START RUN")
 print("obs_space:", env.observation_space, "action_space:", env.action_space)
 obs, info = env.reset()
 
-# cols = ['DRB.UEThpDl.UEID', 'nrCellId']
-# baseline = wait_for_kpms(env, cols, min_rows=1, timeout_s=3.0)
+cols = ['DRB.UEThpDl.UEID', 'nrCellId']
+baseline = wait_for_kpms(env, cols, min_rows=1, timeout_s=3.0)
 # if not baseline:
 #     raise RuntimeError("No KPIs produced after reset; increase simTime or check NS-3 run.")
 

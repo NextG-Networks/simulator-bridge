@@ -328,7 +328,8 @@ class SQLiteDatabaseAPI:
         query += f" WHERE {from_clause}.timestamp = ?"
 
         result = self.cursor.execute(query, (timestamp,)).fetchall()
-        return result if result else None # [(observation_tuple)]
+        # return result if result else None # [(observation_tuple)] === ORIGINAL ===
+        return result or [] # sammes testing
 
     @staticmethod
     def extract_cellId(filepath) -> int:
