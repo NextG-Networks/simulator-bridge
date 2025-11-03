@@ -93,12 +93,25 @@ class NsOranEnv(gym.Env):
                 os.path.join(self.ns3_path, 'build/'),
                 os.path.join(self.ns3_path, 'build/lib'))
         
+        # === original ===
         # We use both LD_ and DYLD_ to support Linux and Mac OS.
-        self.environment = {
-            'LD_LIBRARY_PATH': library_path,
-            'DYLD_LIBRARY_PATH': library_path}
+        # self.environment = {
+        #     'LD_LIBRARY_PATH': library_path,
+        #     'DYLD_LIBRARY_PATH': library_path}
+        # === original ===
+
+        env = os.environ.copy()
+
+        def _prepend(var, value):
+            old = env.get(var)
+            env[var] = f"{value}:{old}" if old else value
+
+        _prepend('LD_LIBRARY_PATH',  library_path)
+        _prepend('DYLD_LIBRARY_PATH', library_path)   # harmless on Linux, needed on macOS
+
+        self.environment = env
         
-        # Configure and build ns-3
+        # Configure and build ns-3 
         self.configure_and_build_ns3()
 
         # ns-3's build status output is used to get the executable path for the

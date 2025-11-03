@@ -231,7 +231,7 @@ static ns3::GlobalValue q_useSemaphores ("useSemaphores", "If true, enables the 
                                         ns3::BooleanValue (false), ns3::MakeBooleanChecker ());
 
 static ns3::GlobalValue g_controlFileName ("controlFileName", "The path to the control file (can be absolute)",
-                                     ns3::StringValue ("/home/hybrid/proj/out_ts/xapp_actions.csv"), ns3::MakeStringChecker ());
+                                     ns3::StringValue ("/home/hybrid/proj/out_ts/ts_actions_for_ns3.csv"), ns3::MakeStringChecker ());
 
 static ns3::GlobalValue g_minSpeed ("minSpeed",
                                            "minimum UE speed in m/s",

@@ -181,8 +181,7 @@ class TrafficSteeringEnv(NsOranEnv):
             self.previous_timestamp = self.last_timestamp - (self.scenario_configuration['indicationPeriodicity'] * 1000)
             self.previous_kpms = self.datalake.read_kpms(self.previous_timestamp, self.columns_reward)
         print("Setting up reward computation...")
-        print("Previous KPIs:", self.previous_kpms)
-        print("Current KPIs:", current_kpms)
+        print  
         for t_o, t_n in zip(self.previous_kpms, current_kpms):
             ueImsi_o, ueThpDl_o, sourceCell = t_o
             ueImsi_n, ueThpDl_n, currentCell = t_n

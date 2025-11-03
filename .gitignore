@@ -170,3 +170,5 @@ time.csv
 *.pgf
 
 out_ts/
+
+visual/

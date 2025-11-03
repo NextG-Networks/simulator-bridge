@@ -26,7 +26,7 @@ The background for this project is to see make a more off hands solution on the 
 ## Installation
 If you get lost you could always check the original installations guide at https://openrangym.com/tutorials/ns-o-ran
 
-Firstly open bash 
+Firstly create a folder where you  open bash 
 ```bash
 git clone -b ns-o-ran https://github.com/wineslab/colosseum-near-rt-ric
 

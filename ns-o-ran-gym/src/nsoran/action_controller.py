@@ -42,18 +42,18 @@ class ActionController():
         self.directory = sim_path
         self.log_filename = log_filename
         self.control_filename = control_filename
-        self.xapp_filename = "/home/hybrid/proj/out_ts/xapp_actions.csv"
+        self.xapp_filename = "/home/hybrid/proj/out_ts/ts_actions_for_ns3.csv"
 
         # Init legacy log file with header
-        with open(path.join(self.directory, self.log_filename), 'w') as file:
-            file.write(f"{','.join(header)}\n")
-            file.flush()
+        # with open(path.join(self.directory, self.log_filename), 'w') as file:
+        #     file.write(f"{','.join(header)}\n")
+        #     file.flush()
 
         # Ensure legacy control file exists (append mode, no header by design)
-        open(path.join(self.directory, self.control_filename), 'a').close()
+        # open(path.join(self.directory, self.control_filename), 'a').close()
 
         # Ensure xapp_actions.csv exists with header
-        self._ensure_file_with_header(path.join(self.directory, self.xapp_filename), self.XAPP_HEADER)
+        # self._ensure_file_with_header(path.join(self.directory, self.xapp_filename), self.XAPP_HEADER)
 
     @staticmethod
     def _ensure_file_with_header(filepath, header_cols):
@@ -113,6 +113,7 @@ class ActionController():
             timestamp (int) : action's timestamp
             actions [(tuple)]: list of tuples (ueId, targetCellId)
         """
+        print(f"Writing actions at timestamp {timestamp}: {actions}")
         for action in actions:
             ueId, targetCell = map(int, action)
             #self._write_legacy_row(timestamp, ueId, targetCell)

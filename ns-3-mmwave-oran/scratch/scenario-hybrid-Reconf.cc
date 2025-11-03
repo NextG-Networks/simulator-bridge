@@ -213,10 +213,14 @@ int main (int argc, char** argv)
   // Config::SetDefault("ns3::MmWavePhyMacCommon::CenterFreq", DoubleValue(28e9));
   // Config::SetDefault("ns3::MmWavePhyMacCommon::Bandwidth",  DoubleValue(100e6));
   // Config::SetDefault("ns3::MmWaveEnbPhy::TxPower",          DoubleValue(23.0));
-  Config::SetDefault("ns3::MmWavePhyMacCommon::CenterFreq", DoubleValue(3.5e9));
-  Config::SetDefault("ns3::MmWavePhyMacCommon::Bandwidth",  DoubleValue(20e6));
+  // Config::SetDefault("ns3::MmWavePhyMacCommon::CenterFreq", DoubleValue(3.5e9));
+
+  // Gemini
+  Config::SetDefault("ns3::MmWavePhyMacCommon::CenterFreq", DoubleValue(28e9));
+  Config::SetDefault("ns3::MmWavePhyMacCommon::Bandwidth", DoubleValue(56e6));
   Config::SetDefault("ns3::MmWaveEnbPhy::TxPower",          DoubleValue(10.0));
   Config::SetDefault("ns3::MmWaveUePhy::NoiseFigure",       DoubleValue(7.0));
+
 
 
   // E2 config
@@ -240,6 +244,7 @@ int main (int argc, char** argv)
   mmw->SetEpcHelper(epc);
 
 
+  // 3GPP loss models
   mmw->SetPathlossModelType("ns3::ThreeGppUmiStreetCanyonPropagationLossModel");
   mmw->SetChannelConditionModelType("ns3::ThreeGppUmiStreetCanyonChannelConditionModel");
 
