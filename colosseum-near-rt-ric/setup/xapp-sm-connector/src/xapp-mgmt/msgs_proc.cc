@@ -42,6 +42,8 @@ extern "C" {
 #include "PM-Info-Item.h"
 #include "MeasurementType.h"
 #include "MeasurementValue.h"
+#include "PerUE-PM-Item.h"
+#include "UE-Identity.h"
 }
 
 bool XappMsgHandler::encode_subscription_delete_request(unsigned char* buffer, size_t *buf_len){
@@ -371,6 +373,37 @@ std::string procRicIndication(E2AP_PDU_t *e2apMsg, transaction_identifier gnb_id
 						return s;
 					};
 
+					// Helper lambda to extract measurement from PM_Info_Item
+					auto extract_measurement = [&json_escape](PM_Info_Item_t* pm_item) -> std::string {
+						if (!pm_item) return "";
+						std::string meas = "{";
+						
+						// Extract measurement type (name or ID)
+						if (pm_item->pmType.present == MeasurementType_PR_measName) {
+							if (pm_item->pmType.choice.measName.buf && pm_item->pmType.choice.measName.size > 0) {
+								std::string meas_name((char*)pm_item->pmType.choice.measName.buf, 
+								                     pm_item->pmType.choice.measName.size);
+								meas += "\"name\":\"" + json_escape((unsigned char*)meas_name.c_str(), meas_name.size()) + "\"";
+							}
+						} else if (pm_item->pmType.present == MeasurementType_PR_measID) {
+							meas += "\"id\":" + std::to_string(pm_item->pmType.choice.measID);
+						}
+						
+						// Extract measurement value
+						if (pm_item->pmVal.present == MeasurementValue_PR_valueInt) {
+							meas += ",\"value\":" + std::to_string(pm_item->pmVal.choice.valueInt);
+						} else if (pm_item->pmVal.present == MeasurementValue_PR_valueReal) {
+							char buf[64];
+							snprintf(buf, sizeof(buf), "%.6f", pm_item->pmVal.choice.valueReal);
+							meas += ",\"value\":" + std::string(buf);
+						} else if (pm_item->pmVal.present == MeasurementValue_PR_noValue) {
+							meas += ",\"value\":null";
+						}
+						
+						meas += "}";
+						return meas;
+					};
+
 					std::string out_json;
 					bool decoded_ok = false;
 
@@ -396,39 +429,52 @@ std::string procRicIndication(E2AP_PDU_t *e2apMsg, transaction_identifier gnb_id
 									json += ",\"cellObjectID\":\"" + json_escape((unsigned char*)cell_id.c_str(), cell_id.size()) + "\"";
 								}
 								
-								// Extract PM measurements from list_of_PM_Information
+								// Extract PM measurements from list_of_PM_Information (cell-level)
 								if (f1->list_of_PM_Information && f1->list_of_PM_Information->list.count > 0) {
 									json += ",\"measurements\":[";
 									for (size_t i = 0; i < f1->list_of_PM_Information->list.count; i++) {
 										PM_Info_Item_t* pm_item = f1->list_of_PM_Information->list.array[i];
 										if (pm_item) {
 											if (i > 0) json += ",";
+											json += extract_measurement(pm_item);
+										}
+									}
+									json += "]";
+								}
+								
+								// Extract per-UE measurements from list_of_matched_UEs
+								if (f1->list_of_matched_UEs && f1->list_of_matched_UEs->list.count > 0) {
+									json += ",\"ues\":[";
+									for (size_t i = 0; i < f1->list_of_matched_UEs->list.count; i++) {
+										PerUE_PM_Item_t* ue_item = f1->list_of_matched_UEs->list.array[i];
+										if (ue_item) {
+											if (i > 0) json += ",";
 											json += "{";
 											
-											// Extract measurement type (name or ID)
-											bool has_type = false;
-											if (pm_item->pmType.present == MeasurementType_PR_measName) {
-												if (pm_item->pmType.choice.measName.buf && pm_item->pmType.choice.measName.size > 0) {
-													std::string meas_name((char*)pm_item->pmType.choice.measName.buf, 
-													                     pm_item->pmType.choice.measName.size);
-													json += "\"name\":\"" + json_escape((unsigned char*)meas_name.c_str(), meas_name.size()) + "\"";
-													has_type = true;
+											// Extract UE ID
+											if (ue_item->ueId.buf && ue_item->ueId.size > 0) {
+												std::string ue_id_hex;
+												ue_id_hex.reserve(ue_item->ueId.size * 2);
+												static const char* hex_chars = "0123456789abcdef";
+												for (size_t j = 0; j < ue_item->ueId.size; j++) {
+													unsigned char c = ue_item->ueId.buf[j];
+													ue_id_hex += hex_chars[(c >> 4) & 0xF];
+													ue_id_hex += hex_chars[c & 0xF];
 												}
-											} else if (pm_item->pmType.present == MeasurementType_PR_measID) {
-												json += "\"id\":" + std::to_string(pm_item->pmType.choice.measID);
-												has_type = true;
+												json += "\"ueId\":\"" + ue_id_hex + "\"";
 											}
 											
-											// Extract measurement value
-											if (pm_item->pmVal.present == MeasurementValue_PR_valueInt) {
-												json += ",\"value\":" + std::to_string(pm_item->pmVal.choice.valueInt);
-											} else if (pm_item->pmVal.present == MeasurementValue_PR_valueReal) {
-												// Extract double value
-												char buf[64];
-												snprintf(buf, sizeof(buf), "%.6f", pm_item->pmVal.choice.valueReal);
-												json += ",\"value\":" + std::string(buf);
-											} else if (pm_item->pmVal.present == MeasurementValue_PR_noValue) {
-												json += ",\"value\":null";
+											// Extract per-UE measurements
+											if (ue_item->list_of_PM_Information && ue_item->list_of_PM_Information->list.count > 0) {
+												json += ",\"measurements\":[";
+												for (size_t j = 0; j < ue_item->list_of_PM_Information->list.count; j++) {
+													PM_Info_Item_t* pm_item = ue_item->list_of_PM_Information->list.array[j];
+													if (pm_item) {
+														if (j > 0) json += ",";
+														json += extract_measurement(pm_item);
+													}
+												}
+												json += "]";
 											}
 											
 											json += "}";
@@ -444,9 +490,10 @@ std::string procRicIndication(E2AP_PDU_t *e2apMsg, transaction_identifier gnb_id
 								json += "}";
 								out_json = json;
 								decoded_ok = true;
-								mdclog_write(MDCLOG_INFO, "Decoded KPM E2SM message Format1 (pmContainers=%zu, measurements=%zu)", 
-								             pm_cont_count, 
-								             f1->list_of_PM_Information ? f1->list_of_PM_Information->list.count : 0);
+								size_t meas_count = f1->list_of_PM_Information ? f1->list_of_PM_Information->list.count : 0;
+								size_t ue_count = f1->list_of_matched_UEs ? f1->list_of_matched_UEs->list.count : 0;
+								mdclog_write(MDCLOG_INFO, "Decoded KPM E2SM message Format1 (pmContainers=%zu, measurements=%zu, ues=%zu)", 
+								             pm_cont_count, meas_count, ue_count);
 							}
 						} else {
 							out_json = "{\"serviceModel\":\"KPM\",\"format\":\"unknown\"}";
