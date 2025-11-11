@@ -33,13 +33,15 @@
 
 // E2SM (HelloWorld) indication decode support available in this repo
 #include "../xapp-asn/e2sm/e2sm_indication.hpp"
-// E2SM-KPM ASN.1 types (from oran-e2sim)
+// E2SM-KPM ASN.1 types (from asn1c_defs)
 extern "C" {
 #include "asn_application.h"
 #include "E2SM-KPM-IndicationHeader.h"
 #include "E2SM-KPM-IndicationMessage.h"
 #include "E2SM-KPM-IndicationMessage-Format1.h"
-#include "E2SM-KPM-IndicationMessage-Format2.h"
+#include "PM-Info-Item.h"
+#include "MeasurementType.h"
+#include "MeasurementValue.h"
 }
 
 bool XappMsgHandler::encode_subscription_delete_request(unsigned char* buffer, size_t *buf_len){
@@ -157,19 +159,6 @@ bool  XappMsgHandler::a1_policy_handler(char * message, int *message_len, a1_pol
     return false;
  }
 
- static void dump_hex_ascii(const void* data, size_t len) {
-    auto* p = static_cast<const uint8_t*>(data);
-    std::string ascii;
-    for (size_t i = 0; i < len; ++i) {
-        if (i % 16 == 0) {
-            if (!ascii.empty()) { mdclog_write(MDCLOG_INFO, "    %s", ascii.c_str()); ascii.clear(); }
-            mdclog_write(MDCLOG_INFO, "%04zx: ", i);
-        }
-        mdclog_write(MDCLOG_INFO, "%02x ", p[i]);
-        ascii.push_back((p[i] >= 32 && p[i] <= 126) ? char(p[i]) : '.');
-    }
-    if (!ascii.empty()) mdclog_write(MDCLOG_INFO, "    %s", ascii.c_str());
-}
 
 static inline void PublishKpiToExternal(const std::string& meid,
                                         const std::string& kpi_json)
@@ -210,7 +199,7 @@ void XappMsgHandler::operator()(rmr_mbuf_t *message, bool *resend){
 		case RIC_INDICATION: {
 			mdclog_write(MDCLOG_INFO, "Received RIC indication message of type = %d", message->mtype);
 
-			unsigned char* me_id_null;
+			unsigned char* me_id_null = nullptr;
 			unsigned char* me_id = rmr_get_meid(message, me_id_null);
 			if (me_id == nullptr) {
 				mdclog_write(MDCLOG_ERR, "RIC_INDICATION missing MEID; ignoring");
@@ -218,20 +207,24 @@ void XappMsgHandler::operator()(rmr_mbuf_t *message, bool *resend){
 			}
 
 			std::string meid_str(reinterpret_cast<char*>(me_id));
-			std::string kpi_blob(reinterpret_cast<char*>(message->payload), message->len);
 
-			// (Optional) keep any existing local processing you had
-			process_ric_indication(message->mtype, me_id, message->payload, message->len);
+			// Decode E2SM and get decoded JSON
+			std::string decoded_json = process_ric_indication(message->mtype, me_id, message->payload, message->len);
 
-			// 1) Forward KPI to external system (non-blocking)
-			PublishKpiToExternal(meid_str, kpi_blob);
+			// 1) Forward decoded KPI to external system (non-blocking)
+			// Only send if we successfully decoded, otherwise skip (don't send raw hex)
+			if (!decoded_json.empty()) {
+				PublishKpiToExternal(meid_str, decoded_json);
+			} else {
+				mdclog_write(MDCLOG_WARN, "Failed to decode E2SM message for MEID=%s, skipping", meid_str.c_str());
+			}
 
 			// 2) Ask external system for recommendation on a detached worker
 			//    so we never block the RMR receive thread.
-			if (send_ctrl_) {
-				std::thread([this, meid_str, kpi_blob]() {
+			if (send_ctrl_ && !decoded_json.empty()) {
+				std::thread([this, meid_str, decoded_json]() {
 					// Blocking call into your external brain; replace stub later
-					std::string cmd_json = RequestRecommendation(meid_str, kpi_blob);
+					std::string cmd_json = RequestRecommendation(meid_str, decoded_json);
 
 					if (!cmd_json.empty()) {
 						mdclog_write(MDCLOG_INFO, "[REC←EXT] MEID=%s cmd=%s",
@@ -253,7 +246,7 @@ void XappMsgHandler::operator()(rmr_mbuf_t *message, bool *resend){
 		case (RIC_SUB_RESP): {
         		mdclog_write(MDCLOG_INFO, "Received subscription message of type = %d", message->mtype);
 
-				unsigned char *me_id_null;
+				unsigned char *me_id_null = nullptr;
 				unsigned char *me_id = rmr_get_meid(message, me_id_null);
 				mdclog_write(MDCLOG_INFO,"RMR Received MEID: %s",me_id);
 
@@ -290,7 +283,7 @@ void XappMsgHandler::operator()(rmr_mbuf_t *message, bool *resend){
 
 };
 
-void process_ric_indication(int message_type, transaction_identifier id, const void *message_payload, size_t message_len) {
+std::string process_ric_indication(int message_type, transaction_identifier id, const void *message_payload, size_t message_len) {
 
 	std::cout << "In Process RIC indication" << std::endl;
 	std::cout << "ID " << id << std::endl;
@@ -307,25 +300,22 @@ void process_ric_indication(int message_type, transaction_identifier id, const v
     asn_fprint(stream, &asn_DEF_E2AP_PDU, pdu);
     mdclog_write(MDCLOG_DEBUG, "Decoded E2AP PDU: %s", printBuffer);
 
-    uint8_t res = procRicIndication(pdu, id);
+    return procRicIndication(pdu, id);
   }
 	else {
 		std::cout << "process_ric_indication, retval.code " << retval.code << std::endl;
+		return std::string();
 	}
 }
 
 /**
  * Handle RIC indication
- * TODO doxy
+ * Returns decoded JSON string if successful, empty string otherwise
  */
-uint8_t procRicIndication(E2AP_PDU_t *e2apMsg, transaction_identifier gnb_id)
+std::string procRicIndication(E2AP_PDU_t *e2apMsg, transaction_identifier gnb_id)
 {
    uint8_t idx;
-   uint8_t ied;
-   uint8_t ret = RC_OK;
-   uint32_t recvBufLen;
    RICindication_t *ricIndication;
-   RICaction_ToBeSetup_ItemIEs_t *actionItem;
 
    printf("\nE2AP : RIC Indication received");
    ricIndication = &e2apMsg->choice.initiatingMessage->value.choice.RICindication;
@@ -354,18 +344,7 @@ uint8_t procRicIndication(E2AP_PDU_t *e2apMsg, transaction_identifier gnb_id)
 					memcpy(payload, ricIndication->protocolIEs.list.array[idx]-> \
 																		 value.choice.RICindicationMessage.buf, payload_size);
 
-					// Helper lambdas
-					auto to_hex = [](const unsigned char* data, size_t len) {
-						static const char* H = "0123456789abcdef";
-						std::string s;
-						s.reserve(len * 2);
-						for (size_t i = 0; i < len; ++i) {
-							unsigned char c = data[i];
-							s.push_back(H[(c >> 4) & 0xF]);
-							s.push_back(H[c & 0xF]);
-						}
-						return s;
-					};
+					// Helper lambda
 					auto json_escape = [](const unsigned char* data, size_t len) {
 						std::string s;
 						s.reserve(len + 8);
@@ -404,32 +383,76 @@ uint8_t procRicIndication(E2AP_PDU_t *e2apMsg, transaction_identifier gnb_id)
 					                                    payload,
 					                                    payload_size);
 					if (kpm && kpm_res.code == RC_OK) {
-						// Minimal JSON summary without walking deep structures
-						const char* fmt = "unknown";
+						// Decode KPM Format1 and extract measurement data
 						if (kpm->present == E2SM_KPM_IndicationMessage_PR_indicationMessage_Format1) {
-							fmt = "F1";
 							E2SM_KPM_IndicationMessage_Format1_t* f1 = kpm->choice.indicationMessage_Format1;
-							size_t pm_cont_count = f1 ? f1->pm_Containers.list.count : 0;
-							out_json = std::string("{\"serviceModel\":\"KPM\",\"format\":\"") + fmt +
-							           "\",\"pmContainers\":" + std::to_string(pm_cont_count) + "}";
-						} else if (kpm->present == E2SM_KPM_IndicationMessage_PR_indicationMessage_Format2) {
-							fmt = "F2";
-							E2SM_KPM_IndicationMessage_Format2_t* f2 = kpm->choice.indicationMessage_Format2;
-							std::string sub_id = f2 ? std::to_string((long)f2->subscriptID) : "0";
-							std::string cell_hex = (f2 && f2->cellObjID) ? to_hex(f2->cellObjID->buf, f2->cellObjID->size) : "";
-							std::string gp = (f2 && f2->granulPeriod) ? std::to_string((long)(*f2->granulPeriod)) : "null";
-							// We won't traverse measData deeply here; emit counts only
-							size_t meas_rec = (f2) ? f2->measData.measDataItem.list.count : 0;
-							out_json = std::string("{\"serviceModel\":\"KPM\",\"format\":\"") + fmt +
-							           "\",\"subscriptionId\":" + sub_id +
-							           ",\"granularity\":" + gp +
-							           ",\"cellObjectIdHex\":\"" + cell_hex +
-							           "\",\"measurementRecords\":" + std::to_string(meas_rec) + "}";
+							if (f1) {
+								// Start building JSON with basic info
+								std::string json = "{\"serviceModel\":\"KPM\",\"format\":\"F1\"";
+								
+								// Add cellObjectID if present
+								if (f1->cellObjectID.buf && f1->cellObjectID.size > 0) {
+									std::string cell_id((char*)f1->cellObjectID.buf, f1->cellObjectID.size);
+									json += ",\"cellObjectID\":\"" + json_escape((unsigned char*)cell_id.c_str(), cell_id.size()) + "\"";
+								}
+								
+								// Extract PM measurements from list_of_PM_Information
+								if (f1->list_of_PM_Information && f1->list_of_PM_Information->list.count > 0) {
+									json += ",\"measurements\":[";
+									for (size_t i = 0; i < f1->list_of_PM_Information->list.count; i++) {
+										PM_Info_Item_t* pm_item = f1->list_of_PM_Information->list.array[i];
+										if (pm_item) {
+											if (i > 0) json += ",";
+											json += "{";
+											
+											// Extract measurement type (name or ID)
+											bool has_type = false;
+											if (pm_item->pmType.present == MeasurementType_PR_measName) {
+												if (pm_item->pmType.choice.measName.buf && pm_item->pmType.choice.measName.size > 0) {
+													std::string meas_name((char*)pm_item->pmType.choice.measName.buf, 
+													                     pm_item->pmType.choice.measName.size);
+													json += "\"name\":\"" + json_escape((unsigned char*)meas_name.c_str(), meas_name.size()) + "\"";
+													has_type = true;
+												}
+											} else if (pm_item->pmType.present == MeasurementType_PR_measID) {
+												json += "\"id\":" + std::to_string(pm_item->pmType.choice.measID);
+												has_type = true;
+											}
+											
+											// Extract measurement value
+											if (pm_item->pmVal.present == MeasurementValue_PR_valueInt) {
+												json += ",\"value\":" + std::to_string(pm_item->pmVal.choice.valueInt);
+											} else if (pm_item->pmVal.present == MeasurementValue_PR_valueReal) {
+												// Extract double value
+												char buf[64];
+												snprintf(buf, sizeof(buf), "%.6f", pm_item->pmVal.choice.valueReal);
+												json += ",\"value\":" + std::string(buf);
+											} else if (pm_item->pmVal.present == MeasurementValue_PR_noValue) {
+												json += ",\"value\":null";
+											}
+											
+											json += "}";
+										}
+									}
+									json += "]";
+								}
+								
+								// Add PM containers count
+								size_t pm_cont_count = f1->pm_Containers.list.count;
+								json += ",\"pmContainers\":" + std::to_string(pm_cont_count);
+								
+								json += "}";
+								out_json = json;
+								decoded_ok = true;
+								mdclog_write(MDCLOG_INFO, "Decoded KPM E2SM message Format1 (pmContainers=%zu, measurements=%zu)", 
+								             pm_cont_count, 
+								             f1->list_of_PM_Information ? f1->list_of_PM_Information->list.count : 0);
+							}
 						} else {
 							out_json = "{\"serviceModel\":\"KPM\",\"format\":\"unknown\"}";
+							decoded_ok = true;
+							mdclog_write(MDCLOG_INFO, "Decoded KPM E2SM message (present=%d, unsupported format)", kpm->present);
 						}
-						decoded_ok = true;
-						mdclog_write(MDCLOG_INFO, "Decoded KPM E2SM message (present=%d)", kpm->present);
 					}
 
 					// 2) If KPM not decoded, try HelloWorld
@@ -461,22 +484,15 @@ uint8_t procRicIndication(E2AP_PDU_t *e2apMsg, transaction_identifier gnb_id)
 						}
 					}
 
-					// send decoded JSON if available, otherwise raw payload, to external agent over TCP
-					std::string agent_ip = find_agent_ip_from_gnb(gnb_id);
-					if (decoded_ok && !out_json.empty()) {
-						send_socket((char*)out_json.c_str(), out_json.size(), agent_ip);
-					} else {
-						send_socket(payload, payload_size, agent_ip);
-					}
-
 					if (kpm) {
 						ASN_STRUCT_FREE(asn_DEF_E2SM_KPM_IndicationMessage, kpm);
 					}
 					free(payload);
 
-					break;
+					// Return decoded JSON if available, empty string otherwise
+					return decoded_ok ? out_json : std::string();
 				}
       }
    }
-   return ret; // TODO update ret value in case of errors
+   return std::string(); // No E2SM payload found or decoded
 }

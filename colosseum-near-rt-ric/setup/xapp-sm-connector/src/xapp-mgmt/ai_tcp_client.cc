@@ -27,25 +27,13 @@ AiTcpClient::~AiTcpClient() {
     }
 }
 
-static std::string toHex(const std::string& data)
-{
-    static const char* kHex = "0123456789abcdef";
-    std::string out;
-    out.reserve(data.size() * 2);
-    for (unsigned char c : data) {
-        out.push_back(kHex[(c >> 4) & 0xF]);
-        out.push_back(kHex[c & 0xF]);
-    }
-    return out;
-}
-
 bool AiTcpClient::SendKpi(const std::string& meid,
                           const std::string& kpi_json)
 {
-    // KPI may be binary or arbitrary bytes; send as hex string for robustness.
-    // Schema: {"type":"kpi","meid":"...","kpi_hex":"<hex-bytes>"}
-    std::string kpi_hex = toHex(kpi_json);
-    std::string msg = "{\"type\":\"kpi\",\"meid\":\"" + meid + "\",\"kpi_hex\":\"" + kpi_hex + "\"}";
+    // Send decoded JSON directly (kpi_json is already a decoded E2SM JSON object)
+    // Schema: {"type":"kpi","meid":"...","kpi":{...decoded JSON...}}
+    // kpi_json is already a valid JSON object, so embed it directly
+    std::string msg = "{\"type\":\"kpi\",\"meid\":\"" + meid + "\",\"kpi\":" + kpi_json + "}";
 
     std::lock_guard<std::mutex> lock(mtx_);
     if (!ensureConnected()) {
@@ -69,11 +57,10 @@ bool AiTcpClient::GetRecommendation(const std::string& meid,
                                     const std::string& kpi_json,
                                     std::string& out_cmd_json)
 {
-    // Request:
-    // {"type":"recommendation_request","meid":"...","kpi_hex":"<hex-bytes>"}
-    std::string kpi_hex = toHex(kpi_json);
+    // Request: send decoded JSON directly
+    // {"type":"recommendation_request","meid":"...","kpi":{...decoded JSON...}}
     std::string req = "{\"type\":\"recommendation_request\",\"meid\":\"" + meid +
-                      "\",\"kpi_hex\":\"" + kpi_hex + "\"}";
+                      "\",\"kpi\":" + kpi_json + "}";
 
     std::lock_guard<std::mutex> lock(mtx_);
     if (!ensureConnected()) {

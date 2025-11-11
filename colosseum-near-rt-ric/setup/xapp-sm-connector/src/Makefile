@@ -10,7 +10,7 @@ ASNSRC:=../asn1c_defs
 E2APSRC:=./xapp-asn/e2ap
 E2SMSRC:=./xapp-asn/e2sm
 # ASN1c directory from oran-e2sim for KPM decoding
-E2SIM_ASN1C:=../../../../oran-e2sim/e2sim/src/ASN1c
+# E2SIM_ASN1C:=../../../../oran-e2sim/e2sim/src/ASN1c
 
 ####### Logging library and flags
 CLOGFLAGS:= `pkg-config mdclog --cflags`
@@ -21,14 +21,14 @@ RNIB_LIBS:= -pthread /usr/local/include/rnib/rnibreader.a
 
 
 BASEFLAGS=  -Wall -std=c++14 $(CLOGFLAGS) 
-C_BASEFLAGS= -Wall $(CLOGFLAGS) -DASN_DISABLE_OER_SUPPORT
+C_BASEFLAGS= -Wall $(CLOGFLAGS)
 
 XAPPFLAGS= -I./
 HWFLAGS= -I./
 UTILFLAGS= -I$(UTILSRC)
 MSGFLAGS= -I$(MSGSRC)
 
-ASNFLAGS=-I$(ASNSRC) -I$(E2SIM_ASN1C) -DASN_DISABLE_OER_SUPPORT
+ASNFLAGS=-I$(ASNSRC)
 E2APFLAGS = -I$(E2APSRC)
 E2SMFLAGS = -I$(E2SMSRC)
 
@@ -57,7 +57,17 @@ E2AP_OBJ = $(E2AP_SRC:.cc=.o)
 E2SM_OBJ = $(E2SM_SRC:.cc=.o)
 ASN1C_MODULES = $(ASN1C_SRC:.c=.o)
 
-$(ASN1C_MODULES): export CFLAGS = $(C_BASEFLAGS) $(ASNFLAGS)
+# Explicit pattern rule for ASN1C modules - compile only, don't link
+# This prevents Make from using its implicit rule that tries to link executables
+$(ASNSRC)/%.o: $(ASNSRC)/%.c
+	$(CC) $(C_BASEFLAGS) $(ASNFLAGS) -c -o $@ $<
+
+# Disable Make's implicit rule that tries to link object files into executables
+# for files in the ASN1C directory (this problem started after adding oran-e2sim files)
+# The pattern %: %.o would normally link an executable from an object file
+# We override it with an empty rule that does nothing
+$(ASNSRC)/%: $(ASNSRC)/%.o ;
+
 $(UTIL_OBJ):export CPPFLAGS=$(BASEFLAGS) $(UTILFLAGS) $(E2APFLAGS) $(E2SMFLAGS) $(ASNFLAGS) $(MSGFLAGS)
 
 $(MSG_OBJ):export CPPFLAGS=$(BASEFLAGS) $(MSGFLAGS) $(ASNFLAGS) $(E2APFLAGS) $(E2SMFLAGS)
@@ -67,15 +77,19 @@ $(XAPP_OBJ): export CPPFLAGS = $(BASEFLAGS) $(XAPPFLAGS) $(UTILFLAGS) $(MSGFLAGS
 
 $(HWXAPP_OBJ):export CPPFLAGS=$(BASEFLAGS) $(HWFLAGS) $(XAPPFLAGS) $(UTILFLAGS) $(MSGFLAGS) $(E2APFLAGS) $(E2SMFLAGS) $(ASNFLAGS)
 
-OBJ= $(HWXAPP_OBJ) $(UTIL_OBJ) $(MSG_OBJ)  $(ASN1C_MODULES) $(E2AP_OBJ) $(E2SM_OBJ) $(XAPP_OBJ)
+OBJ= $(HWXAPP_OBJ) $(UTIL_OBJ) $(MSG_OBJ)  $(ASN1C_MODULES) $(E2AP_OBJ) $(E2SM_OBJ) $(XAPP_OBJ) agent_connector.o
 
 print-%  : ; @echo $* = $($*)
 
+agent_connector.o: agent_connector.cc
+	$(CXX) -c $(BASEFLAGS) $(XAPPFLAGS) $(UTILFLAGS) $(MSGFLAGS) $(E2APFLAGS) $(E2SMFLAGS) $(ASNFLAGS) -o $@ $<
+
 hw_xapp_main: $(OBJ)
-	$(CXX) -o $@  $(OBJ) $(LIBS) $(RNIBFLAGS) $(CPPFLAGS) $(CLOGFLAGS) agent_connector.cc
+	$(CXX) -o $@  $(OBJ) $(LIBS) $(RNIBFLAGS) $(CPPFLAGS) $(CLOGFLAGS)
 
 install: hw_xapp_main
 	install  -D hw_xapp_main  /usr/local/bin/hw_xapp_main
 
 clean:
-	-rm *.o $(ASNSRC)/*.o $(E2APSRC)/*.o $(UTILSRC)/*.o $(E2SMSRC)/*.o  $(MSGSRC)/*.o $(SRC)/*.o hw_xapp_main 
+	-rm -f *.o $(ASNSRC)/*.o $(E2APSRC)/*.o $(UTILSRC)/*.o $(E2SMSRC)/*.o  $(MSGSRC)/*.o $(SRC)/*.o hw_xapp_main
+	-rm -f $(ASNSRC)/ProtocolIE-SingleContainer $(ASNSRC)/*.exe 
