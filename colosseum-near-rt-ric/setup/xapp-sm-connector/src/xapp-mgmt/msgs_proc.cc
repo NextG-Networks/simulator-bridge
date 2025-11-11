@@ -25,7 +25,11 @@
 
 #include "msgs_proc.hpp"
 #include <stdio.h>
+#include <thread>
+#include <string>
 // #include "xapp.hpp"
+
+#include "ai_tcp_client.h"
 
 
 bool XappMsgHandler::encode_subscription_delete_request(unsigned char* buffer, size_t *buf_len){
@@ -157,6 +161,23 @@ bool  XappMsgHandler::a1_policy_handler(char * message, int *message_len, a1_pol
     if (!ascii.empty()) mdclog_write(MDCLOG_INFO, "    %s", ascii.c_str());
 }
 
+static inline void PublishKpiToExternal(const std::string& meid,
+                                        const std::string& kpi_json)
+{
+    GetAiTcpClient().SendKpi(meid, kpi_json);
+}
+
+static inline std::string RequestRecommendation(const std::string& meid,
+                                                const std::string& kpi_json)
+{
+    std::string cmd;
+    if (GetAiTcpClient().GetRecommendation(meid, kpi_json, cmd)) {
+        return cmd;    // non-empty JSON command
+    }
+    return "";         // no action
+}
+
+
 
 //For processing received messages.XappMsgHandler should mention if resend is required or not.
 void XappMsgHandler::operator()(rmr_mbuf_t *message, bool *resend){
@@ -176,26 +197,45 @@ void XappMsgHandler::operator()(rmr_mbuf_t *message, bool *resend){
 				*resend = true;
 				break;
 
-		case (RIC_INDICATION): {
-
+		case RIC_INDICATION: {
 			mdclog_write(MDCLOG_INFO, "Received RIC indication message of type = %d", message->mtype);
 
-			unsigned char *me_id_null;
-			unsigned char *me_id = rmr_get_meid(message, me_id_null);
-			mdclog_write(MDCLOG_INFO,"RMR Received MEID: %s",me_id);
+			unsigned char* me_id_null;
+			unsigned char* me_id = rmr_get_meid(message, me_id_null);
+			if (me_id == nullptr) {
+				mdclog_write(MDCLOG_ERR, "RIC_INDICATION missing MEID; ignoring");
+				break;
+			}
 
+			std::string meid_str(reinterpret_cast<char*>(me_id));
+			std::string kpi_blob(reinterpret_cast<char*>(message->payload), message->len);
+
+			// (Optional) keep any existing local processing you had
 			process_ric_indication(message->mtype, me_id, message->payload, message->len);
-			// --- send back data via xapp.cc ---
-			// dump_hex_ascii(message->payload, message->len);
 
-			mdclog_write(MDCLOG_INFO, "[HOOK] checking send_ctrl_");
-			
+			// 1) Forward KPI to external system (non-blocking)
+			PublishKpiToExternal(meid_str, kpi_blob);
+
+			// 2) Ask external system for recommendation on a detached worker
+			//    so we never block the RMR receive thread.
 			if (send_ctrl_) {
-				std::string meid_str(reinterpret_cast<char*>(me_id));
-				mdclog_write(MDCLOG_INFO, "[HOOK] about to send control to %s", meid_str.c_str());
-				send_ctrl_(R"({"cmd":"move-enb","node":3,"x":50.0,"y":0.0})", "gnb:131-133-31000000");
+				std::thread([this, meid_str, kpi_blob]() {
+					// Blocking call into your external brain; replace stub later
+					std::string cmd_json = RequestRecommendation(meid_str, kpi_blob);
+
+					if (!cmd_json.empty()) {
+						mdclog_write(MDCLOG_INFO, "[REC←EXT] MEID=%s cmd=%s",
+									meid_str.c_str(), cmd_json.c_str());
+						// Ship the command over RIC/E2 using the already-registered sender
+						send_ctrl_(cmd_json, meid_str);
+					} else {
+						mdclog_write(MDCLOG_INFO, "[REC←EXT] MEID=%s no-action", meid_str.c_str());
+					}
+				}).detach();
 			} else {
-				mdclog_write(MDCLOG_WARN, "[HOOK] send_ctrl_ not set; call set_control_sender() before processing messages (this=%p)", (void*)this);
+				mdclog_write(MDCLOG_WARN,
+							"[HOOK] send_ctrl_ not set; call set_control_sender() before processing messages (this=%p)",
+							(void*)this);
 			}
 			break;
 		}
