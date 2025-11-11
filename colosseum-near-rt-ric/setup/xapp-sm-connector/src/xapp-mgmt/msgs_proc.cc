@@ -44,6 +44,16 @@ extern "C" {
 #include "MeasurementValue.h"
 #include "PerUE-PM-Item.h"
 #include "UE-Identity.h"
+#include "L3-RRC-Measurements.h"
+#include "MeasQuantityResults.h"
+#include "ServingCellMeasurements.h"
+#include "MeasResultNeighCells.h"
+#include "MeasResultServMOList.h"
+#include "MeasResultServMO.h"
+#include "MeasResultNR.h"
+#include "MeasResultListNR.h"
+#include "MeasResultPCell.h"
+#include "RRCEvent.h"
 }
 
 bool XappMsgHandler::encode_subscription_delete_request(unsigned char* buffer, size_t *buf_len){
@@ -373,8 +383,33 @@ std::string procRicIndication(E2AP_PDU_t *e2apMsg, transaction_identifier gnb_id
 						return s;
 					};
 
+					// Helper lambda to extract RSRP/RSRQ/SINR from MeasQuantityResults
+					auto extract_signal_quality = [](MeasQuantityResults_t* mq) -> std::string {
+						if (!mq) return "";
+						std::string sq = "{";
+						bool has_any = false;
+						
+						if (mq->rsrp) {
+							sq += "\"rsrp\":" + std::to_string(*mq->rsrp);
+							has_any = true;
+						}
+						if (mq->rsrq) {
+							if (has_any) sq += ",";
+							sq += "\"rsrq\":" + std::to_string(*mq->rsrq);
+							has_any = true;
+						}
+						if (mq->sinr) {
+							if (has_any) sq += ",";
+							sq += "\"sinr\":" + std::to_string(*mq->sinr);
+							has_any = true;
+						}
+						
+						sq += "}";
+						return has_any ? sq : "";
+					};
+
 					// Helper lambda to extract measurement from PM_Info_Item
-					auto extract_measurement = [&json_escape](PM_Info_Item_t* pm_item) -> std::string {
+					auto extract_measurement = [&json_escape, &extract_signal_quality](PM_Info_Item_t* pm_item) -> std::string {
 						if (!pm_item) return "";
 						std::string meas = "{";
 						
@@ -398,6 +433,80 @@ std::string procRicIndication(E2AP_PDU_t *e2apMsg, transaction_identifier gnb_id
 							meas += ",\"value\":" + std::string(buf);
 						} else if (pm_item->pmVal.present == MeasurementValue_PR_noValue) {
 							meas += ",\"value\":null";
+						} else if (pm_item->pmVal.present == MeasurementValue_PR_valueRRC) {
+							// Extract RRC measurements (RSRP, RSRQ, SINR) - critical for network optimization!
+							L3_RRC_Measurements_t* rrc = pm_item->pmVal.choice.valueRRC;
+							if (rrc) {
+								meas += ",\"rrcEvent\":";
+								if (rrc->rrcEvent == RRCEvent_b1) meas += "\"b1\"";
+								else if (rrc->rrcEvent == RRCEvent_a3) meas += "\"a3\"";
+								else if (rrc->rrcEvent == RRCEvent_a5) meas += "\"a5\"";
+								else if (rrc->rrcEvent == RRCEvent_periodic) meas += "\"periodic\"";
+								else {
+									char buf[32];
+									snprintf(buf, sizeof(buf), "\"%ld\"", rrc->rrcEvent);
+									meas += buf;
+								}
+								
+								// Extract serving cell measurements (RSRP/RSRQ/SINR)
+								if (rrc->servingCellMeasurements) {
+									if (rrc->servingCellMeasurements->present == ServingCellMeasurements_PR_nr_measResultServingMOList) {
+										MeasResultServMOList_t* serv_list = rrc->servingCellMeasurements->choice.nr_measResultServingMOList;
+										if (serv_list && serv_list->list.count > 0) {
+											meas += ",\"servingCells\":[";
+											for (size_t i = 0; i < serv_list->list.count; i++) {
+												MeasResultServMO_t* serv_mo = serv_list->list.array[i];
+												if (serv_mo) {
+													if (i > 0) meas += ",";
+													meas += "{\"servCellId\":" + std::to_string(serv_mo->servCellId);
+													if (serv_mo->measResultServingCell.measResult.cellResults.resultsSSB_Cell) {
+														std::string sq = extract_signal_quality(serv_mo->measResultServingCell.measResult.cellResults.resultsSSB_Cell);
+														if (!sq.empty()) meas += ",\"signalQuality\":" + sq;
+													}
+													meas += "}";
+												}
+											}
+											meas += "]";
+										}
+									} else if (rrc->servingCellMeasurements->present == ServingCellMeasurements_PR_eutra_measResultPCell) {
+										MeasResultPCell_t* pcell = rrc->servingCellMeasurements->choice.eutra_measResultPCell;
+										if (pcell) {
+											meas += ",\"servingCell\":{";
+											meas += "\"physCellId\":" + std::to_string(pcell->eutra_PhysCellId);
+											meas += ",\"rsrp\":" + std::to_string(pcell->rsrpResult);
+											meas += ",\"rsrq\":" + std::to_string(pcell->rsrqResult);
+											meas += "}";
+										}
+									}
+								}
+								
+								// Extract neighbor cell measurements (for handover optimization)
+								if (rrc->measResultNeighCells) {
+									if (rrc->measResultNeighCells->present == MeasResultNeighCells_PR_measResultListNR) {
+										MeasResultListNR_t* neigh_list = rrc->measResultNeighCells->choice.measResultListNR;
+										if (neigh_list && neigh_list->list.count > 0) {
+											meas += ",\"neighborCells\":[";
+											for (size_t i = 0; i < neigh_list->list.count && i < 8; i++) { // maxCellReport = 8
+												MeasResultNR_t* neigh = neigh_list->list.array[i];
+												if (neigh) {
+													if (i > 0) meas += ",";
+													meas += "{";
+													if (neigh->physCellId) meas += "\"physCellId\":" + std::to_string(*neigh->physCellId);
+													if (neigh->measResult.cellResults.resultsSSB_Cell) {
+														std::string sq = extract_signal_quality(neigh->measResult.cellResults.resultsSSB_Cell);
+														if (!sq.empty()) {
+															if (neigh->physCellId) meas += ",";
+															meas += "\"signalQuality\":" + sq;
+														}
+													}
+													meas += "}";
+												}
+											}
+											meas += "]";
+										}
+									}
+								}
+							}
 						}
 						
 						meas += "}";
