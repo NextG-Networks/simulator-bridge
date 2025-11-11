@@ -9,6 +9,8 @@ MSGSRC:=./xapp-mgmt
 ASNSRC:=../asn1c_defs
 E2APSRC:=./xapp-asn/e2ap
 E2SMSRC:=./xapp-asn/e2sm
+# ASN1c directory from oran-e2sim for KPM decoding
+E2SIM_ASN1C:=../../../../oran-e2sim/e2sim/src/ASN1c
 
 ####### Logging library and flags
 CLOGFLAGS:= `pkg-config mdclog --cflags`
@@ -26,7 +28,7 @@ HWFLAGS= -I./
 UTILFLAGS= -I$(UTILSRC)
 MSGFLAGS= -I$(MSGSRC)
 
-ASNFLAGS=-I$(ASNSRC) -DASN_DISABLE_OER_SUPPORT
+ASNFLAGS=-I$(ASNSRC) -I$(E2SIM_ASN1C) -DASN_DISABLE_OER_SUPPORT
 E2APFLAGS = -I$(E2APSRC)
 E2SMFLAGS = -I$(E2SMSRC)
 

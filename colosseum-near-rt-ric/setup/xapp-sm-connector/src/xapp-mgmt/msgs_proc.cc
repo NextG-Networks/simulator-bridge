@@ -31,6 +31,16 @@
 
 #include "ai_tcp_client.h"
 
+// E2SM (HelloWorld) indication decode support available in this repo
+#include "../xapp-asn/e2sm/e2sm_indication.hpp"
+// E2SM-KPM ASN.1 types (from oran-e2sim)
+extern "C" {
+#include "asn_application.h"
+#include "E2SM-KPM-IndicationHeader.h"
+#include "E2SM-KPM-IndicationMessage.h"
+#include "E2SM-KPM-IndicationMessage-Format1.h"
+#include "E2SM-KPM-IndicationMessage-Format2.h"
+}
 
 bool XappMsgHandler::encode_subscription_delete_request(unsigned char* buffer, size_t *buf_len){
 
@@ -340,16 +350,129 @@ uint8_t procRicIndication(E2AP_PDU_t *e2apMsg, transaction_identifier gnb_id)
 					size_t payload_size = ricIndication->protocolIEs.list.array[idx]-> \
 																		 value.choice.RICindicationMessage.size;
 
-
 					char* payload = (char*) calloc(payload_size, sizeof(char));
 					memcpy(payload, ricIndication->protocolIEs.list.array[idx]-> \
 																		 value.choice.RICindicationMessage.buf, payload_size);
 
-					printf("Payload %s\n", payload);
+					// Helper lambdas
+					auto to_hex = [](const unsigned char* data, size_t len) {
+						static const char* H = "0123456789abcdef";
+						std::string s;
+						s.reserve(len * 2);
+						for (size_t i = 0; i < len; ++i) {
+							unsigned char c = data[i];
+							s.push_back(H[(c >> 4) & 0xF]);
+							s.push_back(H[c & 0xF]);
+						}
+						return s;
+					};
+					auto json_escape = [](const unsigned char* data, size_t len) {
+						std::string s;
+						s.reserve(len + 8);
+						for (size_t i = 0; i < len; ++i) {
+							unsigned char c = data[i];
+							switch (c) {
+								case '\"': s += "\\\""; break;
+								case '\\': s += "\\\\"; break;
+								case '\b': s += "\\b"; break;
+								case '\f': s += "\\f"; break;
+								case '\n': s += "\\n"; break;
+								case '\r': s += "\\r"; break;
+								case '\t': s += "\\t"; break;
+								default:
+									if (c < 0x20) {
+										char buf[7];
+										snprintf(buf, sizeof(buf), "\\u%04x", c);
+										s += buf;
+									} else {
+										s.push_back((char)c);
+									}
+							}
+						}
+						return s;
+					};
 
-					// send payload to agent
+					std::string out_json;
+					bool decoded_ok = false;
+
+					// 1) Try E2SM-KPM
+					E2SM_KPM_IndicationMessage_t *kpm = 0;
+					asn_dec_rval_t kpm_res = asn_decode(0,
+					                                    ATS_ALIGNED_BASIC_PER,
+					                                    &asn_DEF_E2SM_KPM_IndicationMessage,
+					                                    (void**)&kpm,
+					                                    payload,
+					                                    payload_size);
+					if (kpm && kpm_res.code == RC_OK) {
+						// Minimal JSON summary without walking deep structures
+						const char* fmt = "unknown";
+						if (kpm->present == E2SM_KPM_IndicationMessage_PR_indicationMessage_Format1) {
+							fmt = "F1";
+							E2SM_KPM_IndicationMessage_Format1_t* f1 = kpm->choice.indicationMessage_Format1;
+							size_t pm_cont_count = f1 ? f1->pm_Containers.list.count : 0;
+							out_json = std::string("{\"serviceModel\":\"KPM\",\"format\":\"") + fmt +
+							           "\",\"pmContainers\":" + std::to_string(pm_cont_count) + "}";
+						} else if (kpm->present == E2SM_KPM_IndicationMessage_PR_indicationMessage_Format2) {
+							fmt = "F2";
+							E2SM_KPM_IndicationMessage_Format2_t* f2 = kpm->choice.indicationMessage_Format2;
+							std::string sub_id = f2 ? std::to_string((long)f2->subscriptID) : "0";
+							std::string cell_hex = (f2 && f2->cellObjID) ? to_hex(f2->cellObjID->buf, f2->cellObjID->size) : "";
+							std::string gp = (f2 && f2->granulPeriod) ? std::to_string((long)(*f2->granulPeriod)) : "null";
+							// We won't traverse measData deeply here; emit counts only
+							size_t meas_rec = (f2) ? f2->measData.measDataItem.list.count : 0;
+							out_json = std::string("{\"serviceModel\":\"KPM\",\"format\":\"") + fmt +
+							           "\",\"subscriptionId\":" + sub_id +
+							           ",\"granularity\":" + gp +
+							           ",\"cellObjectIdHex\":\"" + cell_hex +
+							           "\",\"measurementRecords\":" + std::to_string(meas_rec) + "}";
+						} else {
+							out_json = "{\"serviceModel\":\"KPM\",\"format\":\"unknown\"}";
+						}
+						decoded_ok = true;
+						mdclog_write(MDCLOG_INFO, "Decoded KPM E2SM message (present=%d)", kpm->present);
+					}
+
+					// 2) If KPM not decoded, try HelloWorld
+					if (!decoded_ok) {
+						E2SM_HelloWorld_IndicationMessage_t *hw_msg = 0;
+						asn_dec_rval_t dres = asn_decode(0,
+						                                 ATS_ALIGNED_BASIC_PER,
+						                                 &asn_DEF_E2SM_HelloWorld_IndicationMessage,
+						                                 (void**)&hw_msg,
+						                                 payload,
+						                                 payload_size);
+						if (dres.code == RC_OK && hw_msg != nullptr) {
+							e2sm_indication helper_iface;
+							e2sm_indication_helper decoded;
+							if (helper_iface.get_fields(hw_msg, decoded)) {
+								std::string msg_str = json_escape(decoded.message, decoded.message_len);
+								out_json = std::string("{\"serviceModel\":\"HelloWorld\",\"indicationMessage\":\"") +
+								           msg_str + "\"}";
+								decoded_ok = true;
+								mdclog_write(MDCLOG_INFO, "Decoded HelloWorld E2SM message, len=%zu", decoded.message_len);
+							} else {
+								mdclog_write(MDCLOG_WARN, "HelloWorld decode get_fields failed");
+							}
+						} else {
+							mdclog_write(MDCLOG_WARN, "E2SM HelloWorld decode failed (code=%d)", dres.code);
+						}
+						if (hw_msg) {
+							ASN_STRUCT_FREE(asn_DEF_E2SM_HelloWorld_IndicationMessage, hw_msg);
+						}
+					}
+
+					// send decoded JSON if available, otherwise raw payload, to external agent over TCP
 					std::string agent_ip = find_agent_ip_from_gnb(gnb_id);
-					send_socket(payload, payload_size, agent_ip);
+					if (decoded_ok && !out_json.empty()) {
+						send_socket((char*)out_json.c_str(), out_json.size(), agent_ip);
+					} else {
+						send_socket(payload, payload_size, agent_ip);
+					}
+
+					if (kpm) {
+						ASN_STRUCT_FREE(asn_DEF_E2SM_KPM_IndicationMessage, kpm);
+					}
+					free(payload);
 
 					break;
 				}
