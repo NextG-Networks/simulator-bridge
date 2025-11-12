@@ -362,6 +362,7 @@ class LteEnbNetDevice : public LteNetDevice
     std::string m_controlFilename;
     bool m_scheduleControlMessages;
     int m_lastValidTimestamp{0};
+    std::map<std::string, time_t> m_controlFileMtimes; // Track file modification times to avoid re-reading unchanged files
 
 }; // end of class LteEnbNetDevice
 

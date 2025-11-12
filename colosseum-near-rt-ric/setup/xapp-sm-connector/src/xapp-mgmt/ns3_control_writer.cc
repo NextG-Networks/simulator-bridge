@@ -14,7 +14,11 @@ Ns3ControlWriter::Ns3ControlWriter(const std::string& base_dir)
     : base_dir_(base_dir),
       qos_file_(base_dir + "/qos_actions.csv"),
       handover_file_(base_dir + "/ts_actions_for_ns3.csv"),
-      energy_file_(base_dir + "/es_actions_for_ns3.csv")
+      energy_file_(base_dir + "/es_actions_for_ns3.csv"),
+      enb_txpower_file_(base_dir + "/enb_txpower_actions.csv"),
+      ue_txpower_file_(base_dir + "/ue_txpower_actions.csv"),
+      cbr_file_(base_dir + "/cbr_actions.csv"),
+      prb_cap_file_(base_dir + "/prb_cap_actions.csv")
 {
     // Ensure base directory exists (non-blocking, use filesystem API instead of system call)
     // Note: /tmp should already exist, but create if needed
@@ -274,6 +278,160 @@ bool Ns3ControlWriter::WriteEnergyControl(const std::string& config_json) {
     return count > 0;
 }
 
+bool Ns3ControlWriter::WriteEnbTxPowerControl(const std::string& config_json) {
+    std::vector<std::string> commands = extractJsonArray(config_json, "commands");
+    
+    if (commands.empty()) {
+        mdclog_write(MDCLOG_WARN, "[NS3-CTRL] No eNB TX power commands found in JSON");
+        return false;
+    }
+    
+    std::ofstream csv(enb_txpower_file_, std::ios::out | std::ios::trunc);
+    if (!csv.is_open()) {
+        mdclog_write(MDCLOG_ERR, "[NS3-CTRL] Failed to open eNB TX power control file: %s", enb_txpower_file_.c_str());
+        return false;
+    }
+    
+    long long timestamp = getTimestamp();
+    int count = 0;
+    
+    for (const auto& cmd : commands) {
+        std::string cell_id = extractJsonField(cmd, "cellId");
+        std::string dbm_str = extractJsonField(cmd, "dbm");
+        
+        if (cell_id.empty() || dbm_str.empty()) {
+            mdclog_write(MDCLOG_WARN, "[NS3-CTRL] Skipping invalid eNB TX power command: %s", cmd.c_str());
+            continue;
+        }
+        
+        csv << timestamp << "," << cell_id << "," << dbm_str << "\n";
+        count++;
+        
+        mdclog_write(MDCLOG_INFO, "[NS3-CTRL] eNB TX Power: cellId=%s, dbm=%s", 
+                    cell_id.c_str(), dbm_str.c_str());
+    }
+    
+    csv.close();
+    mdclog_write(MDCLOG_INFO, "[NS3-CTRL] Wrote %d eNB TX power commands to %s", count, enb_txpower_file_.c_str());
+    return count > 0;
+}
+
+bool Ns3ControlWriter::WriteUeTxPowerControl(const std::string& config_json) {
+    std::vector<std::string> commands = extractJsonArray(config_json, "commands");
+    
+    if (commands.empty()) {
+        mdclog_write(MDCLOG_WARN, "[NS3-CTRL] No UE TX power commands found in JSON");
+        return false;
+    }
+    
+    std::ofstream csv(ue_txpower_file_, std::ios::out | std::ios::trunc);
+    if (!csv.is_open()) {
+        mdclog_write(MDCLOG_ERR, "[NS3-CTRL] Failed to open UE TX power control file: %s", ue_txpower_file_.c_str());
+        return false;
+    }
+    
+    long long timestamp = getTimestamp();
+    int count = 0;
+    
+    for (const auto& cmd : commands) {
+        std::string ue_id = extractJsonField(cmd, "ueId");
+        std::string dbm_str = extractJsonField(cmd, "dbm");
+        
+        if (ue_id.empty() || dbm_str.empty()) {
+            mdclog_write(MDCLOG_WARN, "[NS3-CTRL] Skipping invalid UE TX power command: %s", cmd.c_str());
+            continue;
+        }
+        
+        // Convert IMSI to RNTI (same as QoS command)
+        uint16_t rnti = imsiToRnti(ue_id);
+        if (rnti == 0) {
+            mdclog_write(MDCLOG_WARN, "[NS3-CTRL] Failed to convert IMSI %s to RNTI, skipping", 
+                        ue_id.c_str());
+            continue;
+        }
+        
+        csv << timestamp << "," << rnti << "," << dbm_str << "\n";
+        count++;
+        
+        mdclog_write(MDCLOG_INFO, "[NS3-CTRL] UE TX Power: IMSI=%s -> RNTI=%u, dbm=%s", 
+                    ue_id.c_str(), rnti, dbm_str.c_str());
+    }
+    
+    csv.close();
+    mdclog_write(MDCLOG_INFO, "[NS3-CTRL] Wrote %d UE TX power commands to %s", count, ue_txpower_file_.c_str());
+    return count > 0;
+}
+
+bool Ns3ControlWriter::WriteCbrControl(const std::string& config_json) {
+    std::string rate = extractJsonField(config_json, "rate");
+    std::string pkt_bytes = extractJsonField(config_json, "pktBytes");
+    
+    if (rate.empty() && pkt_bytes.empty()) {
+        mdclog_write(MDCLOG_WARN, "[NS3-CTRL] No CBR parameters found in JSON");
+        return false;
+    }
+    
+    std::ofstream csv(cbr_file_, std::ios::out | std::ios::trunc);
+    if (!csv.is_open()) {
+        mdclog_write(MDCLOG_ERR, "[NS3-CTRL] Failed to open CBR control file: %s", cbr_file_.c_str());
+        return false;
+    }
+    
+    long long timestamp = getTimestamp();
+    csv << timestamp << "," << (rate.empty() ? "" : rate) << "," << (pkt_bytes.empty() ? "" : pkt_bytes) << "\n";
+    csv.close();
+    
+    mdclog_write(MDCLOG_INFO, "[NS3-CTRL] Wrote CBR control: rate=%s, pktBytes=%s to %s", 
+                rate.c_str(), pkt_bytes.c_str(), cbr_file_.c_str());
+    return true;
+}
+
+bool Ns3ControlWriter::WritePrbCapControl(const std::string& config_json) {
+    std::vector<std::string> commands = extractJsonArray(config_json, "commands");
+    
+    if (commands.empty()) {
+        mdclog_write(MDCLOG_WARN, "[NS3-CTRL] No PRB cap commands found in JSON");
+        return false;
+    }
+    
+    std::ofstream csv(prb_cap_file_, std::ios::out | std::ios::trunc);
+    if (!csv.is_open()) {
+        mdclog_write(MDCLOG_ERR, "[NS3-CTRL] Failed to open PRB cap control file: %s", prb_cap_file_.c_str());
+        return false;
+    }
+    
+    long long timestamp = getTimestamp();
+    int count = 0;
+    
+    for (const auto& cmd : commands) {
+        std::string ue_id = extractJsonField(cmd, "ueId");
+        std::string max_prb = extractJsonField(cmd, "maxPrb");
+        
+        if (ue_id.empty() || max_prb.empty()) {
+            mdclog_write(MDCLOG_WARN, "[NS3-CTRL] Skipping invalid PRB cap command: %s", cmd.c_str());
+            continue;
+        }
+        
+        // Convert IMSI to RNTI (same as QoS command)
+        uint16_t rnti = imsiToRnti(ue_id);
+        if (rnti == 0) {
+            mdclog_write(MDCLOG_WARN, "[NS3-CTRL] Failed to convert IMSI %s to RNTI, skipping", 
+                        ue_id.c_str());
+            continue;
+        }
+        
+        csv << timestamp << "," << rnti << "," << max_prb << "\n";
+        count++;
+        
+        mdclog_write(MDCLOG_INFO, "[NS3-CTRL] PRB Cap: IMSI=%s -> RNTI=%u, maxPrb=%s", 
+                    ue_id.c_str(), rnti, max_prb.c_str());
+    }
+    
+    csv.close();
+    mdclog_write(MDCLOG_INFO, "[NS3-CTRL] Wrote %d PRB cap commands to %s", count, prb_cap_file_.c_str());
+    return count > 0;
+}
+
 bool Ns3ControlWriter::WriteControl(const std::string& config_json) {
     std::string type = extractJsonField(config_json, "type");
     
@@ -283,6 +441,14 @@ bool Ns3ControlWriter::WriteControl(const std::string& config_json) {
         return WriteHandoverControl(config_json);
     } else if (type == "energy" || type == "es") {
         return WriteEnergyControl(config_json);
+    } else if (type == "set-enb-txpower") {
+        return WriteEnbTxPowerControl(config_json);
+    } else if (type == "set-ue-txpower") {
+        return WriteUeTxPowerControl(config_json);
+    } else if (type == "set-cbr") {
+        return WriteCbrControl(config_json);
+    } else if (type == "cap-ue-prb") {
+        return WritePrbCapControl(config_json);
     } else {
         mdclog_write(MDCLOG_ERR, "[NS3-CTRL] Unknown control type: %s", type.c_str());
         return false;

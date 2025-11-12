@@ -268,16 +268,209 @@ send_config(energy_config)
 
 ---
 
+## Additional Commands (Newly Implemented)
+
+### 4. eNB Transmit Power (`set-enb-txpower`)
+
+**Purpose:** Adjust the transmit power of base stations (eNBs) in real-time. Useful for interference management, coverage optimization, and energy efficiency.
+
+**Request Format:**
+```json
+{
+  "type": "set-enb-txpower",
+  "commands": [
+    {
+      "cellId": "1112",
+      "dbm": 43.0
+    },
+    {
+      "cellId": "1113",
+      "dbm": 38.0
+    }
+  ]
+}
+```
+
+**Fields:**
+- `type`: Must be `"set-enb-txpower"`
+- `commands`: Array of eNB TX power commands
+  - `cellId`: Cell ID as string (e.g., `"1112"`, `"1113"`)
+  - `dbm`: Transmit power in dBm (double, typically 20-46 dBm)
+
+**How it works:**
+- NS3 reads `enb_txpower_actions.csv` periodically
+- Calls `GetPhy()->SetAttribute("TxPower", ...)` for the matching cell
+- Changes take effect immediately
+
+**Example:**
+```python
+config = {
+    "type": "set-enb-txpower",
+    "commands": [
+        {"cellId": "1112", "dbm": 43.0},  # Increase power for cell 1112
+        {"cellId": "1113", "dbm": 35.0}   # Decrease power for cell 1113
+    ]
+}
+```
+
+**Use Cases:**
+- Interference mitigation (reduce power in dense deployments)
+- Coverage optimization (increase power for edge UEs)
+- Energy efficiency (reduce power during low traffic)
+
+---
+
+### 5. UE Transmit Power (`set-ue-txpower`)
+
+**Purpose:** Adjust the transmit power of individual UEs. Useful for power control optimization and interference management.
+
+**Request Format:**
+```json
+{
+  "type": "set-ue-txpower",
+  "commands": [
+    {
+      "ueId": "111000000000001",
+      "dbm": 23.0
+    },
+    {
+      "ueId": "111000000000002",
+      "dbm": 20.0
+    }
+  ]
+}
+```
+
+**Fields:**
+- `type`: Must be `"set-ue-txpower"`
+- `commands`: Array of UE TX power commands
+  - `ueId`: IMSI string (same format as QoS command)
+  - `dbm`: Transmit power in dBm (double, typically 10-23 dBm)
+
+**How it works:**
+- The xApp converts IMSI to RNTI automatically
+- NS3 reads `ue_txpower_actions.csv` periodically
+- Finds the UE node by IMSI and sets its PHY TX power
+- Changes take effect immediately
+
+**Example:**
+```python
+config = {
+    "type": "set-ue-txpower",
+    "commands": [
+        {"ueId": "111000000000001", "dbm": 23.0},  # Max power for UE 1
+        {"ueId": "111000000000002", "dbm": 15.0}   # Lower power for UE 2
+    ]
+}
+```
+
+**Use Cases:**
+- Power control optimization
+- Interference reduction
+- Battery life optimization for mobile UEs
+
+---
+
+### 6. CBR Traffic Rate (`set-cbr`)
+
+**Purpose:** Dynamically adjust the Constant Bit Rate (CBR) traffic generation rate. Useful for load testing, capacity planning, and traffic engineering.
+
+**Request Format:**
+```json
+{
+  "type": "set-cbr",
+  "rate": "50Mbps",
+  "pktBytes": 1200
+}
+```
+
+**Fields:**
+- `type`: Must be `"set-cbr"`
+- `rate`: Data rate as string (e.g., `"50Mbps"`, `"1Gbps"`, `"100kb/s"`)
+- `pktBytes`: Packet size in bytes (optional, unsigned integer)
+
+**How it works:**
+- NS3 reads `cbr_actions.csv` periodically
+- Finds all `OnOffApplication` instances in the simulation
+- Updates their `DataRate` and/or `PacketSize` attributes
+- Changes take effect immediately
+
+**Example:**
+```python
+config = {
+    "type": "set-cbr",
+    "rate": "50Mbps",      # Set data rate to 50 Mbps
+    "pktBytes": 1200       # Set packet size to 1200 bytes
+}
+```
+
+**Note:** This command updates **all** OnOffApplication instances in the simulation. For per-UE traffic control, you would need to modify the scenario code to track application instances per UE.
+
+**Use Cases:**
+- Load testing (gradually increase traffic)
+- Capacity planning
+- Traffic engineering experiments
+
+---
+
+### 7. PRB Cap (`cap-ue-prb`)
+
+**Purpose:** Set a maximum PRB (Physical Resource Block) allocation cap per UE. This is different from QoS percentage - it sets an absolute maximum, while QoS sets a percentage of available PRBs.
+
+**Request Format:**
+```json
+{
+  "type": "cap-ue-prb",
+  "commands": [
+    {
+      "ueId": "111000000000001",
+      "maxPrb": 10
+    },
+    {
+      "ueId": "111000000000002",
+      "maxPrb": 5
+    }
+  ]
+}
+```
+
+**Fields:**
+- `type`: Must be `"cap-ue-prb"`
+- `commands`: Array of PRB cap commands
+  - `ueId`: IMSI string (same format as QoS command)
+  - `maxPrb`: Maximum number of PRBs (unsigned integer, typically 1-100)
+
+**How it works:**
+- The xApp converts IMSI to RNTI automatically
+- NS3 reads `prb_cap_actions.csv` periodically
+- **Note:** Full implementation requires scheduler modifications. Currently, the command is parsed and logged, but the scheduler needs to be modified to respect these caps during PRB allocation.
+
+**Example:**
+```python
+config = {
+    "type": "cap-ue-prb",
+    "commands": [
+        {"ueId": "111000000000001", "maxPrb": 10},  # Cap UE 1 to 10 PRBs
+        {"ueId": "111000000000002", "maxPrb": 5}    # Cap UE 2 to 5 PRBs
+    ]
+}
+```
+
+**Limitation:** This command is **partially implemented**. The xApp writes the commands correctly, and NS3 parses them, but the scheduler needs to be modified to actually enforce the caps. This requires changes to the MAC scheduler code (e.g., `PfFfMacScheduler`, `RrFfMacScheduler`) to check PRB caps before allocation.
+
+**Use Cases:**
+- Network slicing (limit resources per slice)
+- Fairness enforcement
+- Resource isolation
+
+---
+
 ## Future Enhancements (Not Yet Implemented)
 
-The following commands from `RuntimeControlAPI.md` are **not yet implemented** but could be added:
+The following commands from `RuntimeControlAPI.md` are **not yet implemented**:
 
 - `pin-ue-mcs`: Control MCS (Modulation and Coding Scheme) per UE
-- `cap-ue-prb`: Set maximum PRB cap per UE (different from percentage allocation)
-- `set-cbr`: Adjust traffic generation rate
 - `set-e2-periodicity`: Change reporting frequency
-- `set-enb-txpower`: Adjust base station transmit power
-- `set-ue-txpower`: Adjust UE transmit power
 - `set-slice-weights`: Scheduler weights for network slicing
 
 ---

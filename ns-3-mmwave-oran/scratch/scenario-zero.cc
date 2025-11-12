@@ -36,7 +36,9 @@
 #include "ns3/mobility-helper.h"
 #include "ns3/mobility-model.h"
 #include "ns3/vector.h"
-
+#include <fstream>
+#include <string>
+#include <vector>
 
 using namespace ns3;
 using namespace mmwave;
@@ -305,6 +307,47 @@ main (int argc, char *argv[])
 
   GlobalValue::GetValueByName ("useSemaphores", booleanValue);
   bool useSemaphores = booleanValue.Get ();
+
+  // Clear control files at startup to ensure scenario starts with defaults
+  // This allows configs to be applied during runtime without affecting initial state
+  if (!controlFilename.empty())
+  {
+    // Extract directory from control filename (default: /tmp/ns3-control)
+    std::string controlDir = "/tmp/ns3-control";
+    size_t lastSlash = controlFilename.find_last_of('/');
+    if (lastSlash != std::string::npos)
+    {
+      controlDir = controlFilename.substr(0, lastSlash);
+    }
+    
+    // List of control files to clear
+    std::vector<std::string> controlFiles = {
+      controlDir + "/qos_actions.csv",
+      controlDir + "/ts_actions_for_ns3.csv",
+      controlDir + "/es_actions_for_ns3.csv",
+      controlDir + "/enb_txpower_actions.csv",
+      controlDir + "/ue_txpower_actions.csv",
+      controlDir + "/cbr_actions.csv",
+      controlDir + "/prb_cap_actions.csv"
+    };
+    
+    NS_LOG_UNCOND("Clearing control files at startup to ensure default settings...");
+    for (const auto& file : controlFiles)
+    {
+      std::ofstream clearFile(file, std::ios::trunc);
+      if (clearFile.is_open())
+      {
+        clearFile.close();
+        NS_LOG_UNCOND("Cleared control file: " << file);
+      }
+      else
+      {
+        // File might not exist yet, that's okay
+        NS_LOG_DEBUG("Control file does not exist (will be created when needed): " << file);
+      }
+    }
+    NS_LOG_UNCOND("Control files cleared. Scenario will start with default settings.");
+  }
 
   NS_LOG_UNCOND ("e2lteEnabled " << e2lteEnabled << " e2nrEnabled " << e2nrEnabled << " e2du "
                                  << e2du << " e2cuCp " << e2cuCp << " e2cuUp " << e2cuUp

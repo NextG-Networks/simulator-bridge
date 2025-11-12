@@ -533,9 +533,13 @@ std::string procRicIndication(E2AP_PDU_t *e2apMsg, transaction_identifier gnb_id
 								std::string json = "{\"serviceModel\":\"KPM\",\"format\":\"F1\"";
 								
 								// Add cellObjectID if present
+								// If not present, try to extract from MEID (e.g., "gnb:131-133-31000000" -> "1113")
 								if (f1->cellObjectID.buf && f1->cellObjectID.size > 0) {
 									std::string cell_id((char*)f1->cellObjectID.buf, f1->cellObjectID.size);
-									json += ",\"cellObjectID\":\"" + json_escape((unsigned char*)cell_id.c_str(), cell_id.size()) + "\"";
+									// Only add if it's a valid cell ID (not "NRCellCU" or empty)
+									if (cell_id != "NRCellCU" && !cell_id.empty()) {
+										json += ",\"cellObjectID\":\"" + json_escape((unsigned char*)cell_id.c_str(), cell_id.size()) + "\"";
+									}
 								}
 								
 								// Extract PM measurements from list_of_PM_Information (cell-level)
