@@ -64,6 +64,8 @@ MEASUREMENT_LABELS = {
     "DRB.UEThpUl.UEID": "UE_Throughput_UL_Mbps",
     "DRB.PdcpSduDelayDl.UEID": "UE_PDCP_Delay_DL_ms",
     "DRB.PdcpSduDelayUl.UEID": "UE_PDCP_Delay_UL_ms",
+    "DRB.PdcpSduDelayDl": "UE_PDCP_Delay_DL_ms",  # Alternative format
+    "DRB.PdcpSduDelayUl": "UE_PDCP_Delay_UL_ms",  # Alternative format
     "DRB.PdcpSduVolumeDl.UEID": "UE_PDCP_Bytes_DL",
     "DRB.PdcpSduVolumeUl.UEID": "UE_PDCP_Bytes_UL",
     "DRB.PdcpPduNbrDl.UEID": "UE_PDCP_PDU_Count_DL",
@@ -71,9 +73,9 @@ MEASUREMENT_LABELS = {
     "RRU.PrbUsedDl.UEID": "UE_PRB_Used_DL",
     "RRU.PrbUsedUl.UEID": "UE_PRB_Used_UL",
     
-    # RRC measurements (signal quality)
-    "HO.SrcCellQual.RS-SINR.UEID": "RSRP_dBm",
-    "HO.TrgtCellQual.RS-SINR.UEID": "Target_RSRP_dBm",
+    # RRC measurements (signal quality) - Note: These are SINR, not RSRP!
+    "HO.SrcCellQual.RS-SINR.UEID": "SINR_dB",  # Serving cell SINR
+    "HO.TrgtCellQual.RS-SINR.UEID": "Target_SINR_dB",  # Target cell SINR
     "HO.SrcCellQual.RS-RSRQ.UEID": "RSRQ_dB",
     "HO.TrgtCellQual.RS-RSRQ.UEID": "Target_RSRQ_dB",
     "HO.SrcCellQual.RS-SINR": "SINR_dB",
@@ -97,6 +99,10 @@ def get_measurement_label(name):
         return "UE_Throughput_DL_Mbps" if "UEID" in name or "UE" in name else "Throughput_DL_Mbps"
     if "UEThpUl" in name or "ThpUl" in name or "ThroughputUl" in name:
         return "UE_Throughput_UL_Mbps" if "UEID" in name or "UE" in name else "Throughput_UL_Mbps"
+    if "Delay" in name or "delay" in name:
+        if "UEID" in name or "UE" in name:
+            return "UE_PDCP_Delay_DL_ms" if "Dl" in name or "DL" in name else "UE_PDCP_Delay_UL_ms"
+        return "PDCP_SDU_Delay_DL_ms" if "Dl" in name or "DL" in name else "PDCP_SDU_Delay_UL_ms"
     if "BlerDl" in name or "BLERDl" in name:
         return "BLER_DL_percent"
     if "BlerUl" in name or "BLERUl" in name:
@@ -267,6 +273,50 @@ def write_ue_csv(timestamp, meid, cell_id, ue_id, measurements):
                                 ue_csv_file.close()
                                 ue_csv_file = open(CSV_UE_FILE, 'a', newline='')
                                 ue_csv_writer = csv.DictWriter(ue_csv_file, fieldnames=ue_fieldnames, extrasaction='ignore')
+            
+            # Extract serving cell RSRP/RSRQ from EUTRA format (LTE)
+            serving_cell = meas.get("servingCell", {})
+            if serving_cell:
+                if "rsrp" in serving_cell:
+                    csv_name = "RSRP_dBm"
+                    row[csv_name] = serving_cell["rsrp"]
+                    if csv_name not in ue_fieldnames:
+                        ue_fieldnames.append(csv_name)
+                        # Need to rewrite file
+                        ue_csv_file.close()
+                        existing_data = []
+                        if os.path.exists(CSV_UE_FILE):
+                            with open(CSV_UE_FILE, 'r') as f:
+                                reader = csv.DictReader(f)
+                                existing_data = list(reader)
+                        ue_csv_file = open(CSV_UE_FILE, 'w', newline='')
+                        ue_csv_writer = csv.DictWriter(ue_csv_file, fieldnames=ue_fieldnames, extrasaction='ignore')
+                        ue_csv_writer.writeheader()
+                        for old_row in existing_data:
+                            ue_csv_writer.writerow(old_row)
+                        ue_csv_file.close()
+                        ue_csv_file = open(CSV_UE_FILE, 'a', newline='')
+                        ue_csv_writer = csv.DictWriter(ue_csv_file, fieldnames=ue_fieldnames, extrasaction='ignore')
+                if "rsrq" in serving_cell:
+                    csv_name = "RSRQ_dB"
+                    row[csv_name] = serving_cell["rsrq"]
+                    if csv_name not in ue_fieldnames:
+                        ue_fieldnames.append(csv_name)
+                        # Need to rewrite file
+                        ue_csv_file.close()
+                        existing_data = []
+                        if os.path.exists(CSV_UE_FILE):
+                            with open(CSV_UE_FILE, 'r') as f:
+                                reader = csv.DictReader(f)
+                                existing_data = list(reader)
+                        ue_csv_file = open(CSV_UE_FILE, 'w', newline='')
+                        ue_csv_writer = csv.DictWriter(ue_csv_file, fieldnames=ue_fieldnames, extrasaction='ignore')
+                        ue_csv_writer.writeheader()
+                        for old_row in existing_data:
+                            ue_csv_writer.writerow(old_row)
+                        ue_csv_file.close()
+                        ue_csv_file = open(CSV_UE_FILE, 'a', newline='')
+                        ue_csv_writer = csv.DictWriter(ue_csv_file, fieldnames=ue_fieldnames, extrasaction='ignore')
             
             # Extract neighbor cell measurements
             neighbor_cells = meas.get("neighborCells", [])

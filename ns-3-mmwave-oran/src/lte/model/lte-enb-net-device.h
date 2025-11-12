@@ -293,7 +293,9 @@ class LteEnbNetDevice : public LteNetDevice
     std::string GetCurrentDirectory ();
 
     void RegisterNewSinrReading(uint64_t imsi, uint16_t cellId, long double sinr);
+    void RegisterNewRsrpReading(uint64_t imsi, uint16_t cellId, double rsrp);
     std::map<ImsiCellIdPair_t, long double> m_l3sinrMap;
+    std::map<ImsiCellIdPair_t, double> m_l3rsrpMap; ///< Map to store RSRP measurements (dBm)
 
     /**
      * @brief Save at each granularity period of 10 ms the number of UEs connected to the cell

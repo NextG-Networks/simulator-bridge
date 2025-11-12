@@ -1375,6 +1375,7 @@ LteEnbNetDevice::ReportCurrentCellRsrpSinr(Ptr<LteEnbNetDevice> netDev,
     // NS_LOG_UNCOND ("RegisterNewSinrReadingCallback rnti" << std::to_string(rnti)<< " imsi "<<
     // std::to_string(imsi));
     netDev->RegisterNewSinrReading(imsi, cellId, sinr);
+    netDev->RegisterNewRsrpReading(imsi, cellId, rsrp);
 }
 
 void
@@ -1394,6 +1395,25 @@ LteEnbNetDevice::RegisterNewSinrReading(uint64_t imsi, uint16_t cellId, long dou
     NS_LOG_LOGIC(Simulator::Now().GetSeconds()
                  << " enbdev " << m_cellId << " UE " << imsi << " report for " << cellId << " SINR "
                  << m_l3sinrMap[imsiCid]);
+}
+
+void
+LteEnbNetDevice::RegisterNewRsrpReading(uint64_t imsi, uint16_t cellId, double rsrp)
+{
+    if (!m_sendCuCp)
+    {
+        return;
+    }
+
+    // Create key
+    ImsiCellIdPair_t imsiCid{imsi, cellId};
+
+    // We only need to save the last value, so we do not care about overwriting or not
+    m_l3rsrpMap[imsiCid] = rsrp;
+
+    NS_LOG_LOGIC(Simulator::Now().GetSeconds()
+                 << " enbdev " << m_cellId << " UE " << imsi << " report for " << cellId << " RSRP "
+                 << m_l3rsrpMap[imsiCid] << " dBm");
 }
 
 bool
@@ -1693,9 +1713,19 @@ LteEnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
 
         uint64_t txE2DlPduRlc = m_e2RlcStatsCalculator->GetDlTxPackets(imsi, 3);
         uint64_t txE2DlBytesRlc = std::round( m_e2RlcStatsCalculator->GetDlTxData(imsi, 3) * 8 / 1e3); // in kbit, not byte
+        
+        // Calculate BLER from RLC stats: BLER = 1.0 - (rxPackets / txPackets)
+        double dlBler = 0.0;
+        uint64_t rxE2DlPduRlc = m_e2RlcStatsCalculator->GetDlRxPackets(imsi, 3);
+        if (txE2DlPduRlc > 0)
+        {
+            dlBler = 1.0 - (static_cast<double>(rxE2DlPduRlc) / static_cast<double>(txE2DlPduRlc));
+            dlBler = std::max(0.0, std::min(1.0, dlBler)); // Clamp between 0 and 1
+        }
 
         NS_LOG_INFO("ue id " << std::to_string(imsi) << " txE2DlPduRlc " << std::to_string(txE2DlPduRlc));
         NS_LOG_INFO("ue id " << std::to_string(imsi) << " txE2DlBytesRlc " << std::to_string(txE2DlBytesRlc));
+        NS_LOG_INFO("ue id " << std::to_string(imsi) << " rxE2DlPduRlc " << std::to_string(rxE2DlPduRlc) << " BLER " << dlBler);
 
         for (auto drb : drbMap)
         {
@@ -1760,17 +1790,20 @@ LteEnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
                                                      txBytes,
                                                      txDlPackets,
                                                      pdcpThroughput,
-                                                     pdcpLatency);
+                                                     pdcpLatency,
+                                                     dlBler);
         }
 
         // We include here the NR RLC PDU and Bytes even though it is LTE since they traces are not working properly
         // To remove them from the report, remove last two elements keeping commas
+        // Added BLER at the end
         uePmString.insert(std::make_pair(
             imsi,
             std::to_string(txBytes) + "," + std::to_string(txDlPackets) + "," +
                 std::to_string(pdcpThroughput) + "," + std::to_string(pdcpLatency) + "," + 
                 std::to_string(txPdcpPduLteRlc) + "," + std::to_string(txPdcpPduBytesLteRlc)
-                + "," + std::to_string(txPdcpPduBytesNrRlc)+ "," + std::to_string(txPdcpPduNrRlc)));
+                + "," + std::to_string(txPdcpPduBytesNrRlc)+ "," + std::to_string(txPdcpPduNrRlc)
+                + "," + std::to_string(dlBler)));
     }
 
     // get average cell latency
@@ -1924,15 +1957,25 @@ LteEnbNetDevice::BuildRicIndicationMessageCuCp(std::string plmId)
 
             auto uePms = uePmString.find(imsi)->second;
 
-            // SINR for the same cell
+            // SINR and RSRP for the same cell
             ImsiCellIdPair_t cid{imsi, m_cellId};
-            double sinrThisCell = 10 * std::log10(m_l3sinrMap[cid]);
+            double sinrThisCell = 0.0;
+            double rsrpThisCell = 0.0;
+            if (m_l3sinrMap.find(cid) != m_l3sinrMap.end())
+            {
+                sinrThisCell = 10 * std::log10(m_l3sinrMap[cid]);
+            }
+            if (m_l3rsrpMap.find(cid) != m_l3rsrpMap.end())
+            {
+                rsrpThisCell = m_l3rsrpMap[cid];
+            }
             double convertedSinr = L3RrcMeasurements::ThreeGppMapSinr(sinrThisCell);
 
             std::string to_print =
                 std::to_string(timestamp) + "," + ueImsiComplete + "," + std::to_string(ueMapSize) +
                 "," + std::to_string(meanRrcUes)+ "," + uePms + "," + std::to_string(m_cellId) + "," +
-                std::to_string(sinrThisCell) + "," + std::to_string(convertedSinr) + "\n";
+                std::to_string(sinrThisCell) + "," + std::to_string(convertedSinr) + "," +
+                std::to_string(rsrpThisCell) + "\n";
 
             // NS_LOG_DEBUG(to_print);
 
