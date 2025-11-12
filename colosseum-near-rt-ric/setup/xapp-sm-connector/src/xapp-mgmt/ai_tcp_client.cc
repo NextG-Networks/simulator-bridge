@@ -4,10 +4,15 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <poll.h>
 
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <thread>
+#include <atomic>
+#include <functional>
+#include <chrono>
 
 extern "C" {
 #include "mdclog/mdclog.h"
@@ -16,11 +21,13 @@ extern "C" {
 AiTcpClient::AiTcpClient(const std::string& host, int port)
     : host_(host),
       port_(port),
-      sock_(-1)
+      sock_(-1),
+      listener_running_(false)
 {
 }
 
 AiTcpClient::~AiTcpClient() {
+    StopConfigListener();
     if (sock_ >= 0) {
         close(sock_);
         sock_ = -1;
@@ -214,6 +221,100 @@ void AiTcpClient::reset() {
         close(sock_);
         sock_ = -1;
     }
+}
+
+void AiTcpClient::StartConfigListener(std::function<bool(const std::string&)> handler) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    
+    if (listener_running_) {
+        mdclog_write(MDCLOG_WARN, "[AI-TCP] Config listener already running");
+        return;
+    }
+    
+    config_handler_ = std::move(handler);
+    listener_running_ = true;
+    listener_thread_ = std::unique_ptr<std::thread>(new std::thread(&AiTcpClient::configListenerLoop, this));
+    
+    mdclog_write(MDCLOG_INFO, "[AI-TCP] Started config listener thread");
+}
+
+void AiTcpClient::StopConfigListener() {
+    if (!listener_running_) {
+        return;
+    }
+    
+    listener_running_ = false;
+    
+    // Wake up the listener by closing socket if connected
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if (sock_ >= 0) {
+            shutdown(sock_, SHUT_RDWR);
+        }
+    }
+    
+    if (listener_thread_ && listener_thread_->joinable()) {
+        listener_thread_->join();
+    }
+    
+    mdclog_write(MDCLOG_INFO, "[AI-TCP] Stopped config listener");
+}
+
+void AiTcpClient::configListenerLoop() {
+    while (listener_running_) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        
+        if (sock_ < 0) {
+            // Not connected yet, wait a bit
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+        
+        // Use poll to check if data is available (non-blocking)
+        pollfd pfd{};
+        pfd.fd = sock_;
+        pfd.events = POLLIN;
+        
+        int ret = poll(&pfd, 1, 100); // 100ms timeout
+        
+        if (ret > 0 && (pfd.revents & POLLIN)) {
+            // Data available, try to read a config message
+            uint32_t len_net = 0;
+            if (recvAll(&len_net, sizeof(len_net))) {
+                uint32_t len = ntohl(len_net);
+                if (len > 0 && len <= 1024 * 1024) {
+                    std::string config_json(len, '\0');
+                    if (recvAll(&config_json[0], len)) {
+                        // Check if it's a config message (not a recommendation response)
+                        if (config_json.find("\"type\":\"config\"") != std::string::npos ||
+                            config_json.find("\"type\":\"qos\"") != std::string::npos ||
+                            config_json.find("\"type\":\"handover\"") != std::string::npos ||
+                            config_json.find("\"type\":\"energy\"") != std::string::npos) {
+                            // This is a config, not a recommendation response
+                            if (config_handler_) {
+                                mdclog_write(MDCLOG_INFO, "[AI-TCP] Received config: %s", config_json.c_str());
+                                config_handler_(config_json);
+                            }
+                            continue; // Don't treat as recommendation response
+                        }
+                        // Otherwise it might be a recommendation response, but we can't handle it here
+                        // since GetRecommendation expects it. This is a limitation of the current design.
+                    }
+                }
+            } else {
+                // Connection lost, reset
+                reset();
+            }
+        } else if (ret < 0) {
+            // Error
+            reset();
+        }
+        
+        // Release lock before sleep
+    }
+    
+    // Re-acquire lock for unlock
+    std::lock_guard<std::mutex> lock(mtx_);
 }
 
 // Global singleton with env-configurable host/port

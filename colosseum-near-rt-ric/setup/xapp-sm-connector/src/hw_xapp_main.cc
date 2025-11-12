@@ -22,7 +22,10 @@
  */
 
 #include "xapp.hpp"
+#include "xapp-mgmt/ai_tcp_client.h"
+#include "xapp-mgmt/ns3_control_writer.h"
 #include <thread>
+#include <cstdlib>
 
 void signalHandler( int signum ) {
    cout << "Interrupt signal (" << signum << ") received.\n";
@@ -95,6 +98,24 @@ int main(int argc, char *argv[]){
 	sleep(1);
 
 	hw_xapp->startup(std::ref(*sub_handler));
+
+	// Setup bidirectional AI communication: receive configs on same connection
+	std::string ns3_control_dir = []() {
+		const char* dir = std::getenv("NS3_CONTROL_DIR");
+		return dir ? std::string(dir) : std::string("/tmp");
+	}();
+	
+	// Create NS3 control writer
+	std::unique_ptr<Ns3ControlWriter> ns3_writer = std::make_unique<Ns3ControlWriter>(ns3_control_dir);
+	
+	// Start config listener on the existing AI TCP connection
+	// AI can send configs as unsolicited messages on the same socket
+	GetAiTcpClient().StartConfigListener([&ns3_writer](const std::string& config_json) -> bool {
+		return ns3_writer->WriteControl(config_json);
+	});
+	
+	mdclog_write(MDCLOG_INFO, "[MAIN] Started AI config listener on existing connection, writing to %s", 
+	             ns3_control_dir.c_str());
 
 	//xapp->shutdown();
 

@@ -2,6 +2,10 @@
 
 #include <string>
 #include <mutex>
+#include <functional>
+#include <memory>
+#include <atomic>
+#include <thread>
 
 // Thin client used by msgs_proc.cc to talk to the external AI over TCP.
 //
@@ -33,6 +37,11 @@ public:
     bool GetRecommendation(const std::string& meid,
                            const std::string& kpi_json,
                            std::string& out_cmd_json);
+    
+    // Listen for unsolicited config messages from AI (non-blocking, runs in background)
+    // When AI sends a config, calls handler(config_json)
+    void StartConfigListener(std::function<bool(const std::string&)> handler);
+    void StopConfigListener();
 
 private:
     bool ensureConnected();
@@ -45,6 +54,12 @@ private:
     int         port_;
     int         sock_;
     std::mutex mtx_;
+    
+    // Config listener (for bidirectional communication)
+    std::function<bool(const std::string&)> config_handler_;
+    std::atomic<bool> listener_running_;
+    std::unique_ptr<std::thread> listener_thread_;
+    void configListenerLoop();
 };
 
 // Global accessor used by msgs_proc.cc so we don't pass instances around.
