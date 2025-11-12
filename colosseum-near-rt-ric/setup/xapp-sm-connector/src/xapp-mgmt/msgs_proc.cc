@@ -49,7 +49,7 @@ extern "C" {
 #include "ServingCellMeasurements.h"
 #include "MeasResultNeighCells.h"
 #include "MeasResultServMOList.h"
-#include "MeasResultServMO.h"d
+#include "MeasResultServMO.h"
 #include "MeasResultNR.h"
 #include "MeasResultListNR.h"
 #include "MeasResultPCell.h"
