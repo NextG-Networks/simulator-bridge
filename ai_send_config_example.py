@@ -2,7 +2,7 @@
 """
 Example: How AI sends configuration to xApp
 
-The xApp listens on port 5001 (or AI_CONFIG_PORT env var) for JSON configs.
+The xApp receives configs on the same TCP connection as KPIs (port 5000 by default).
 Configs are written to NS3 control files in real-time.
 """
 
@@ -13,7 +13,7 @@ import os
 
 def send_config(config_json, host="127.0.0.1", port=5001):
     """
-    Send configuration JSON to xApp config server
+    Send configuration JSON to xApp config receiver
     
     Args:
         config_json: JSON string or dict with config
@@ -50,16 +50,22 @@ def send_config(config_json, host="127.0.0.1", port=5001):
 
 # Example 1: QoS/PRB allocation config
 def example_qos_config():
-    """Example: Allocate PRB percentages to UEs"""
+    """
+    Example: Allocate PRB percentages to UEs
+    
+    Note: AI sends IMSI values (e.g., "111000000000001").
+    The xApp automatically converts IMSI to RNTI before writing to NS3 control files.
+    Format: "111" (PLMN ID) + "000000000001" (UE number) -> RNTI = 1
+    """
     config = {
         "type": "qos",
         "commands": [
             {
-                "ueId": "111000000000001",
+                "ueId": "111000000000001",  # IMSI format: PLMN(111) + UE_ID(000000000001) -> RNTI=1
                 "percentage": 0.7  # 70% to LTE
             },
             {
-                "ueId": "111000000000002",
+                "ueId": "111000000000002",  # IMSI format: PLMN(111) + UE_ID(000000000002) -> RNTI=2
                 "percentage": 0.5  # 50% to LTE
             }
         ]

@@ -58,8 +58,16 @@ remove_container() {
 remove_container ${CONTAINER_NAME}
 
 # replace parameters, recompile code and restart container
+# Expose port 5001 for AI config receiver
+# Mount shared volume for NS3 control files (host can access files written by xApp)
+NS3_CONTROL_DIR=${NS3_CONTROL_DIR:-/tmp/ns3-control}
+mkdir -p ${NS3_CONTROL_DIR}
 $SUDO docker run -d -it --entrypoint ${ENTRYPOINT} --network ric --ip ${XAPP_IP} \
-    -e DBAAS_SERVICE_HOST=$DBAAS_IP -e DBAAS_SERVICE_PORT=$DBAAS_PORT --name ${CONTAINER_NAME} ${IMAGE_NAME}:latest
+    -p 5001:5001 \
+    -v ${NS3_CONTROL_DIR}:/tmp/ns3-control:rw \
+    -e DBAAS_SERVICE_HOST=$DBAAS_IP -e DBAAS_SERVICE_PORT=$DBAAS_PORT \
+    -e NS3_CONTROL_DIR=/tmp/ns3-control \
+    --name ${CONTAINER_NAME} ${IMAGE_NAME}:latest
 
 if [ -n "${GNB_ID}" ]; then
     docker exec ${CONTAINER_NAME} sed -i "s/^export GNB_ID.*/export GNB_ID=${GNB_ID}/g" /home/xapp-sm-connector/build_xapp.sh

@@ -22,7 +22,7 @@
  */
 
 #include "xapp.hpp"
-#include "xapp-mgmt/ai_tcp_client.h"
+#include "xapp-mgmt/ai_config_receiver.h"
 #include "xapp-mgmt/ns3_control_writer.h"
 #include <thread>
 #include <cstdlib>
@@ -88,34 +88,47 @@ int main(int argc, char *argv[]){
 	mdclog_write(MDCLOG_INFO, "Starting Listener Threads. Number of Workers = %d", num_threads);
 
 	std::unique_ptr<XappMsgHandler> mp_handler = std::make_unique<XappMsgHandler>(config[XappSettings::SettingName::XAPP_ID], std::ref(*sub_handler));
-// 	mp_handler->set_control_sender(
-//   [x = hw_xapp.get()](const std::string& text, const std::string& meid) {
-//     x->send_control_text(text, meid);
-//   }
-// );
+	
+	// Enable E2 control sender for sending commands back to RAN via E2 CONTROL REQUEST
+	mp_handler->set_control_sender(
+	  [x = hw_xapp.get()](const std::string& text, const std::string& meid) {
+	    x->send_control_text(text, meid);
+	  }
+	);
+	
 	hw_xapp->start_xapp_receiver(std::ref(*mp_handler));
 
 	sleep(1);
 
-	hw_xapp->startup(std::ref(*sub_handler));
-
-	// Setup bidirectional AI communication: receive configs on same connection
+	// Setup AI config receiver BEFORE startup (non-blocking, runs in background thread)
+	mdclog_write(MDCLOG_INFO, "[MAIN] Setting up AI config receiver...");
+	
 	std::string ns3_control_dir = []() {
 		const char* dir = std::getenv("NS3_CONTROL_DIR");
-		return dir ? std::string(dir) : std::string("/tmp");
+		return dir ? std::string(dir) : std::string("/tmp/ns3-control");
 	}();
 	
-	// Create NS3 control writer
+	int config_port = []() {
+		const char* port = std::getenv("AI_CONFIG_PORT");
+		return port ? std::atoi(port) : 5001; // Default port 5001 for configs
+	}();
+	
+	// Create NS3 control writer (lightweight, just sets up paths)
 	std::unique_ptr<Ns3ControlWriter> ns3_writer = std::make_unique<Ns3ControlWriter>(ns3_control_dir);
 	
-	// Start config listener on the existing AI TCP connection
-	// AI can send configs as unsolicited messages on the same socket
-	GetAiTcpClient().StartConfigListener([&ns3_writer](const std::string& config_json) -> bool {
+	// Start config receiver server (runs in background thread, non-blocking)
+	AiConfigReceiver::ConfigHandler handler = [&ns3_writer](const std::string& config_json) -> bool {
 		return ns3_writer->WriteControl(config_json);
-	});
+	};
 	
-	mdclog_write(MDCLOG_INFO, "[MAIN] Started AI config listener on existing connection, writing to %s", 
-	             ns3_control_dir.c_str());
+	std::unique_ptr<AiConfigReceiver> config_receiver = std::make_unique<AiConfigReceiver>(config_port, handler);
+	config_receiver->Start();
+	
+	mdclog_write(MDCLOG_INFO, "[MAIN] Started AI config receiver on port %d, writing to %s", 
+	             config_port, ns3_control_dir.c_str());
+
+	// Now start the xApp (this will send subscriptions and start receiving KPIs)
+	hw_xapp->startup(std::ref(*sub_handler));
 
 	//xapp->shutdown();
 

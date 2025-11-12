@@ -1,6 +1,9 @@
 #!/bin/sh
 export AI_HOST=${AI_HOST:-host.docker.internal}
 export AI_PORT=${AI_PORT:-5000}
+export NS3_CONTROL_DIR=${NS3_CONTROL_DIR:-/tmp}
+export AI_CONFIG_PORT=${AI_CONFIG_PORT:-5001}
+
 
 # If AI_HOST is the Docker host alias but it's not mapped, fall back to default gateway IP
 if [ "$AI_HOST" = "host.docker.internal" ]; then

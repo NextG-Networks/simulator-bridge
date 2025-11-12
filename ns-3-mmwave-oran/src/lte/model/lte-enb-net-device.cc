@@ -127,9 +127,17 @@ LteEnbNetDevice::GetCurrentDirectory()
 void
 LteEnbNetDevice::ReadControlFile()
 {
+    std::cout << "[NS3-CTRL] ReadControlFile() CALLED at time: " << Simulator::Now().GetMilliSeconds() 
+              << "ms for cellId=" << m_cellId << " filename='" << m_controlFilename << "'" << std::endl;
+    
+    NS_LOG_UNCOND(Simulator::Now().GetMilliSeconds()
+                << " [NS3-CTRL] Reading control file: " << m_controlFilename);
     NS_LOG_INFO(Simulator::Now().GetMilliSeconds()
                 << " I will try to read the control file " << m_controlFilename);
     // Open the control file and read control commands
+    std::cout << "[NS3-CTRL] ReadControlFile: m_controlFilename='" << m_controlFilename 
+              << "' m_useSemaphores=" << m_useSemaphores << std::endl;
+    
     if (m_controlFilename != "")
     {
         if (m_useSemaphores)
@@ -163,12 +171,17 @@ LteEnbNetDevice::ReadControlFile()
         // open the control file and read handover commands
         if (m_controlFilename != "")
         {
+            std::cout << "[NS3-CTRL] Attempting to open file: " << m_controlFilename << std::endl;
             std::ifstream csv{};
             csv.open(m_controlFilename.c_str(), std::ifstream::in);
             if (!csv.is_open())
             {
+                std::cout << "[NS3-CTRL] ERROR: Can't open control file: " << m_controlFilename << std::endl;
+                NS_LOG_UNCOND("[NS3-CTRL] ERROR: Can't open control file: " << m_controlFilename);
                 NS_FATAL_ERROR("Can't open file " << m_controlFilename.c_str());
             }
+            std::cout << "[NS3-CTRL] Successfully opened control file: " << m_controlFilename << std::endl;
+            NS_LOG_UNCOND("[NS3-CTRL] Successfully opened control file: " << m_controlFilename);
             std::string line;
 
             if (m_controlFilename.find("ts_actions_for_ns3.csv") != std::string::npos)
@@ -290,8 +303,10 @@ LteEnbNetDevice::ReadControlFile()
             }
             else if (m_controlFilename.find("qos_actions.csv") != std::string::npos)
             { // TODO adapt to the scheduling of the messages
+                std::cout << "[NS3-CTRL] Found QoS control file, reading commands..." << std::endl;
                 long long timestamp{};
                 std::unordered_map<uint16_t, double> uePercentages{};
+                NS_LOG_UNCOND("[NS3-CTRL] Found QoS control file, reading commands...");
                 NS_LOG_INFO("Read QoS command");
                 while (std::getline(csv, line))
                 {
@@ -322,27 +337,47 @@ LteEnbNetDevice::ReadControlFile()
                     }
                     else
                     {
+                        std::cout << "[NS3-CTRL] Parsed QoS command: RNTI=" << ueId << " percentage=" << uePerc << std::endl;
+                        NS_LOG_UNCOND("[NS3-CTRL] Parsed QoS command: RNTI=" << ueId << " percentage=" << uePerc);
                         NS_LOG_INFO("Set ue percentage command with timestamp "
                                     << timestamp << " ueId " << ueId << "percentage" << uePerc);
                         uePercentages.insert({ueId, uePerc});
                     }
                 }
 
+                std::cout << "[NS3-CTRL] Parsed " << uePercentages.size() << " QoS commands, checking UeMap..." << std::endl;
                 auto ueMap = m_rrc->GetUeMap();
-                for (std::pair<uint64_t, double> uePercentage : uePercentages)
+                std::cout << "[NS3-CTRL] UeMap has " << ueMap.size() << " UEs. RNTIs: ";
+                for (std::pair<uint16_t, ns3::Ptr<ns3::UeManager>> ue : ueMap)
                 {
-                    uint16_t ueId = m_rrc->GetRntiFromImsi(uePercentage.first);
+                    std::cout << ue.first << " ";
+                }
+                std::cout << std::endl;
+                
+                for (std::pair<uint16_t, double> uePercentage : uePercentages)
+                {
+                    uint16_t ueId = uePercentage.first; // Already RNTI (xApp converts IMSI->RNTI)
+                    std::cout << "[NS3-CTRL] Looking for RNTI=" << ueId << " in UeMap..." << std::endl;
                     if (ueMap.find(ueId) == ueMap.end())
                     {
+                        std::cout << "[NS3-CTRL] WARNING: RNTI=" << ueId << " not found in UeMap. Available RNTIs: ";
+                        for (std::pair<uint16_t, ns3::Ptr<ns3::UeManager>> ue : ueMap)
+                        {
+                            std::cout << ue.first << " ";
+                        }
+                        std::cout << std::endl;
                         NS_LOG_ERROR(ueId << " not found in UeMap");
                         NS_LOG_ERROR("Current map status:");
                         for (std::pair<uint16_t, ns3::Ptr<ns3::UeManager>> ue : ueMap)
                         {
                             NS_LOG_ERROR(ue.first);
                         }
-                        NS_FATAL_ERROR("Wrong UE RNTI passed by the controller, aborting...");
+                        NS_LOG_WARN("Skipping QoS command for unknown RNTI: " << ueId);
+                        continue; // Skip instead of fatal error
                     }
                     double percentage = uePercentage.second;
+                    std::cout << "[NS3-CTRL] Applying QoS: RNTI=" << ueId << " percentage=" << percentage << std::endl;
+                    NS_LOG_UNCOND("[NS3-CTRL] Applying QoS: RNTI=" << ueId << " percentage=" << percentage);
                     this->SetUeQoS(ueId, percentage);
                 }
             }
@@ -932,6 +967,8 @@ void
 LteEnbNetDevice::UpdateConfig(void)
 {
     NS_LOG_FUNCTION(this);
+    std::cout << "[NS3-CTRL-DEBUG] UpdateConfig called for cellId=" << m_cellId 
+              << " m_controlFilename='" << m_controlFilename << "'" << std::endl;
 
     if (m_isConstructed)
     {
@@ -948,6 +985,9 @@ LteEnbNetDevice::UpdateConfig(void)
                           << " and CSG indication " << m_csgIndication);
         m_rrc->SetCsgId(m_csgId, m_csgIndication);
 
+        NS_LOG_UNCOND("[NS3-CTRL] UpdateConfig called: m_e2term=" << (m_e2term ? "SET" : "NULL") 
+                    << " m_controlFilename='" << m_controlFilename << "' cellId=" << m_cellId);
+        
         if (m_e2term)
         {
             NS_LOG_DEBUG("E2sim start in cell " << m_cellId << " force CSV logging "
@@ -956,6 +996,21 @@ LteEnbNetDevice::UpdateConfig(void)
             if (!m_forceE2FileLogging)
             {
                 Simulator::Schedule(MicroSeconds(0), &E2Termination::Start, m_e2term);
+                
+                // Schedule control file reading even when connected to RIC (if control file is specified)
+                NS_LOG_UNCOND("[NS3-CTRL] UpdateConfig: m_controlFilename='" << m_controlFilename 
+                            << "' m_e2Periodicity=" << m_e2Periodicity << " cellId=" << m_cellId);
+                if (m_controlFilename != "")
+                {
+                    Time e2ControlPeriodicity = Seconds(m_e2Periodicity) + MilliSeconds(5);
+                    NS_LOG_UNCOND("[NS3-CTRL] Scheduling control file read for: " << m_controlFilename 
+                                << " at time: " << e2ControlPeriodicity.GetMilliSeconds() << "ms");
+                    Simulator::Schedule(e2ControlPeriodicity, &LteEnbNetDevice::ReadControlFile, this);
+                }
+                else
+                {
+                    NS_LOG_UNCOND("[NS3-CTRL] No control filename set (empty), skipping control file reading");
+                }
             }
             else
             { // give some time for the simulation to start, TODO check value
@@ -1034,7 +1089,10 @@ LteEnbNetDevice::UpdateConfig(void)
 
                     // This is needed when the output of the simulation and the control file are
                     // saved in a different folder from the ns-3 one
-                    m_controlFilename = currentDirectory + '/' + m_controlFilename;
+                    // Only prepend directory if path is not absolute
+                    if (m_controlFilename.empty() || m_controlFilename[0] != '/') {
+                        m_controlFilename = currentDirectory + '/' + m_controlFilename;
+                    }
                     NS_LOG_INFO("The filename of the control file is " << m_controlFilename);
                 }
 
@@ -1068,6 +1126,10 @@ LteEnbNetDevice::SetE2Termination(Ptr<E2Termination> e2term)
 {
     m_e2term = e2term;
 
+    std::cout << "[NS3-CTRL-DEBUG] SetE2Termination called for cellId=" << m_cellId 
+              << " m_controlFilename='" << m_controlFilename << "'"
+              << " m_isConstructed=" << m_isConstructed << std::endl;
+
     NS_LOG_DEBUG("Register E2SM");
 
     if (!m_forceE2FileLogging)
@@ -1084,6 +1146,26 @@ LteEnbNetDevice::SetE2Termination(Ptr<E2Termination> e2term)
                                          std::bind(&LteEnbNetDevice::ControlMessageReceivedCallback,
                                                    this,
                                                    std::placeholders::_1));
+        
+        // Schedule control file reading if filename is set (e2term is now available)
+        // Note: We don't need to check m_isConstructed - scheduling can happen before construction
+        if (m_controlFilename != "")
+        {
+            Time e2ControlPeriodicity = Seconds(m_e2Periodicity) + MilliSeconds(5);
+            double scheduled_time_ms = e2ControlPeriodicity.GetMilliSeconds();
+            double current_time_ms = Simulator::Now().GetMilliSeconds();
+            NS_LOG_UNCOND("[NS3-CTRL] SetE2Termination: Scheduling control file read for: " << m_controlFilename 
+                        << " at time: " << scheduled_time_ms << "ms (current: " << current_time_ms 
+                        << "ms, cellId=" << m_cellId << ", e2Periodicity=" << m_e2Periodicity << ")");
+            std::cout << "[NS3-CTRL] SetE2Termination: Scheduling control file read for: " << m_controlFilename 
+                      << " at time: " << scheduled_time_ms << "ms (current: " << current_time_ms 
+                      << "ms, cellId=" << m_cellId << ", e2Periodicity=" << m_e2Periodicity << ")" << std::endl;
+            Simulator::Schedule(e2ControlPeriodicity, &LteEnbNetDevice::ReadControlFile, this);
+        }
+        else
+        {
+            std::cout << "[NS3-CTRL-DEBUG] SetE2Termination: NOT scheduling - filename is empty" << std::endl;
+        }
     }
 }
 
