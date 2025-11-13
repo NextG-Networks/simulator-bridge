@@ -108,3 +108,35 @@ cd colosseum-near-rt-ric/setup-scripts
 ```
 ./ns3 run scratch/scenario-zero.cc
 ```
+
+# Core functionallity
+
+## * xApp - Network configuration loop
+
+The system is equipped with a xApp to Network configuration loop.
+
+The loop is initialised when the network, connected to the xApp, sends a ASN.1 encoded Key Performance Metric (KPI) bundle to the xApp.
+The xApp, acting as a middle man, decodes the KPI bundle and forwards it to the external AI-system. 
+
+After sending the KPI, the loop resumes, all while polling the AI-system once every 100ms if it has generated any control messages.
+
+Such a generated control message would take a similar form as:
+
+```
+  "({"cmd":"command", "param1":x, "param2":y, "param3":z, ...})", "gnb:131-133-3x000000"
+
+  For example:
+
+  "({"cmd":"move-enb","node":3,"x":50.0,"y":0.0})", "gnb:131-133-31000000"
+```
+
+If a control message is retrieved by the xApp from the external AI-system, the xApp proceeds to forward said message to the network and resumes the loop, listening to KPI bundles sent from the network.
+
+The network in turn executes the control message. In the case of the example message above, it would move end-station 3 by 50 meters in the x direction.
+
+This change would possibly result in KPI metrics such as network-latency being impacted, which will be reflected in the KPI bundles that are sent back to the xApp.
+
+
+
+
+
