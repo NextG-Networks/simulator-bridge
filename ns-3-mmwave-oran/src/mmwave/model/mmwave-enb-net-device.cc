@@ -58,7 +58,8 @@
 #include <ns3/simulator.h>
 #include <ns3/trace-source-accessor.h>
 #include <ns3/uinteger.h>
-
+#include <ns3/ric-control-message.h>
+#include <ns3/ric-control-function-description.h>
 #include <numeric>
 
 namespace ns3
@@ -637,6 +638,13 @@ MmWaveEnbNetDevice::SetE2Termination(Ptr<E2Termination> e2term)
             200,
             kpmFd,
             std::bind(&MmWaveEnbNetDevice::KpmSubscriptionCallback, this, std::placeholders::_1));
+
+        // Register control message callback (similar to LTE)
+        Ptr<RicControlFunctionDescription> ricCtrlFd = Create<RicControlFunctionDescription>();
+        e2term->RegisterSmCallbackToE2Sm(
+            300,
+            ricCtrlFd,
+            std::bind(&MmWaveEnbNetDevice::ControlMessageReceivedCallback, this, std::placeholders::_1));
     }
 }
 
@@ -1620,6 +1628,21 @@ MmWaveEnbNetDevice::SetStartTime(uint64_t st)
 {
     m_startTime = st;
 }
+
+void
+MmWaveEnbNetDevice::ControlMessageReceivedCallback(E2AP_PDU_t* sub_req_pdu)
+{
+    NS_LOG_DEBUG("MmWaveEnbNetDevice::ControlMessageReceivedCallback: Received RIC Control Message");
+    
+    // The RicControlMessage constructor will decode and apply simple commands
+    // like "move-enb", "set-mcs", "set-bandwidth" via ApplySimpleCommand
+    Ptr<RicControlMessage> controlMessage = Create<RicControlMessage>(sub_req_pdu);
+    
+    // For more complex control types, you can add a switch statement here
+    // similar to LteEnbNetDevice, but for now the simple commands are handled
+    // automatically by ApplySimpleCommand
+}
+
 
 uint64_t
 MmWaveEnbNetDevice::GetStartTime()

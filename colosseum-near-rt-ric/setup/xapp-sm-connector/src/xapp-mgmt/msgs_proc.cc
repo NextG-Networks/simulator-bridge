@@ -181,11 +181,38 @@ static inline void PublishKpiToExternal(const std::string& meid,
 static inline std::string RequestRecommendation(const std::string& meid,
                                                 const std::string& kpi_json)
 {
-    std::string cmd;
-    if (GetAiTcpClient().GetRecommendation(meid, kpi_json, cmd)) {
-        return cmd;    // non-empty JSON command
+    // For testing: send bandwidth change after first indication
+    static std::atomic<bool> first_indication_sent{false};
+    static std::mutex test_mutex;
+    
+    {
+        std::lock_guard<std::mutex> lock(test_mutex);
+        if (!first_indication_sent) {
+            first_indication_sent = true;
+            
+            // Schedule test command after 10 seconds
+            std::thread([meid]() {
+                std::this_thread::sleep_for(std::chrono::seconds(10));
+                
+                // Send bandwidth change command
+                std::string cmd = "{\"cmd\":\"set-bandwidth\",\"node\":0,\"bandwidth\":0}";
+                
+                // Get access to xApp instance to send command
+                // Note: You'll need to pass the control sender callback here
+                // For now, this is a placeholder - see Option 2 for better approach
+                mdclog_write(MDCLOG_INFO, "[TEST] Would send command: %s to %s", 
+                            cmd.c_str(), meid.c_str());
+            }).detach();
+        }
     }
-    return "";         // no action
+	return "{\"cmd\":\"set-bandwidth\",\"node\":0,\"bandwidth\":0}";
+    
+    // // Original AI recommendation logic
+    // std::string cmd;
+    // if (GetAiTcpClient().GetRecommendation(meid, kpi_json, cmd)) {
+    //     return cmd;
+    // }
+    return "";
 }
 
 

@@ -31,7 +31,7 @@ NS_LOG_COMPONENT_DEFINE("MVS_Mmwave_1gNB_1UE");
 
 // ---------------- Runtime flags ----------------
 static GlobalValue g_simTime("simTime", "Simulation time (s)",
-  DoubleValue(10.0), MakeDoubleChecker<double>(1.0, 3600.0));
+  DoubleValue(1000.0), MakeDoubleChecker<double>(1.0, 3600.0));
 static GlobalValue g_outDir("outDir", "Output directory",
   StringValue("out/logs"), MakeStringChecker());
 
@@ -39,7 +39,7 @@ static GlobalValue g_outDir("outDir", "Output directory",
 static GlobalValue q_useSemaphores ("useSemaphores","If true, enables the use of semaphores for external environment control",
                                     BooleanValue(false), MakeBooleanChecker());
 static GlobalValue g_controlFileName ("controlFileName","The path to the control file (can be absolute)",
-                                      StringValue("rr_actions_for_ns3.csv"), MakeStringChecker());
+                                      StringValue(""), MakeStringChecker());
 static GlobalValue g_e2lteEnabled ("e2lteEnabled","If true, send LTE E2 reports",
                                    BooleanValue(true), MakeBooleanChecker());
 static GlobalValue g_e2nrEnabled ("e2nrEnabled","If true, send NR E2 reports",
@@ -53,9 +53,9 @@ static GlobalValue g_e2cuCp ("e2cuCp","If true, send CU-CP reports",
 static GlobalValue g_indicationPeriodicity ("indicationPeriodicity","E2 Indication Periodicity (s)", 
                                             DoubleValue(0.1), MakeDoubleChecker<double>(0.01, 2.0));
 static GlobalValue g_e2TermIp ("e2TermIp","RIC E2 termination IP",
-                               StringValue("10.244.0.240"), MakeStringChecker());
+                               StringValue("10.0.2.10"), MakeStringChecker());
 static GlobalValue g_enableE2FileLogging ("enableE2FileLogging","Offline file logging instead of connecting to RIC",
-                                          BooleanValue(true), MakeBooleanChecker());
+                                          BooleanValue(false), MakeBooleanChecker());
 static GlobalValue g_reducedPmValues ("reducedPmValues", "If true, use a subset of the pm containers",
                                       BooleanValue(true), MakeBooleanChecker());
 

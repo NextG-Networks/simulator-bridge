@@ -36,7 +36,8 @@
 
 #include "control-gateway.h"
 #include "ric-control-message.h"
-
+#include <ns3/mmwave-enb-net-device.h>
+#include <ns3/mmwave-enb-mac.h>
 
 
 namespace ns3 {
@@ -196,6 +197,130 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
         ns3::Simulator::ScheduleNow([]() {
             fprintf(stderr, "[RicControlMessage] stop: Stopping simulator now\n");
             ns3::Simulator::Stop();
+        });
+        return;
+    }
+
+
+
+    if (cmd == "set-mcs") {
+        uint32_t nodeId = 0;
+        double mcsValue = 0.0;
+        
+        if (!FindUint(json, "\"node\"", nodeId) || !FindNumber(json, "\"mcs\"", mcsValue)) {
+            fprintf(stderr, "[RicControlMessage] set-mcs requires node and mcs values\n");
+            return;
+        }
+        
+        int mcs = static_cast<int>(mcsValue);
+        if (mcs < 0 || mcs > 28) {
+            fprintf(stderr, "[RicControlMessage] set-mcs: MCS must be between 0 and 28, got %d\n", mcs);
+            return;
+        }
+        
+        ns3::Simulator::ScheduleNow([nodeId, mcs]() {
+            using namespace ns3;
+            
+            // Find the mmWave eNB device for this node
+            if (nodeId >= NodeList::GetNNodes()) {
+                fprintf(stderr, "[RicControlMessage] set-mcs: node %u does not exist\n", nodeId);
+                return;
+            }
+            
+            Ptr<Node> n = NodeList::GetNode(nodeId);
+            if (!n) {
+                fprintf(stderr, "[RicControlMessage] set-mcs: node %u not found\n", nodeId);
+                return;
+            }
+            
+            // Find MmWaveEnbNetDevice
+            Ptr<mmwave::MmWaveEnbNetDevice> enbDev;
+            for (uint32_t i = 0; i < n->GetNDevices(); ++i) {
+                enbDev = n->GetDevice(i)->GetObject<mmwave::MmWaveEnbNetDevice>();
+                if (enbDev) break;
+            }
+            
+            if (!enbDev) {
+                fprintf(stderr, "[RicControlMessage] set-mcs: node %u has no MmWaveEnbNetDevice\n", nodeId);
+                return;
+            }
+            
+            // Set MCS via MAC layer
+            Ptr<mmwave::MmWaveEnbMac> mac = enbDev->GetMac();
+            if (mac) {
+                mac->SetMcs(mcs);
+                fprintf(stderr, "[RicControlMessage] set-mcs: node %u MCS set to %d\n", nodeId, mcs);
+            } else {
+                fprintf(stderr, "[RicControlMessage] set-mcs: node %u has no MAC layer\n", nodeId);
+            }
+        });
+        return;
+    }
+    
+    if (cmd == "set-bandwidth") {
+        uint32_t nodeId = 0;
+        double bwValue = 0.0;
+        
+        // nodeId is optional - if 0 or not provided, search all nodes
+        bool hasNodeId = FindUint(json, "\"node\"", nodeId);
+        if (!FindNumber(json, "\"bandwidth\"", bwValue)) {
+            fprintf(stderr, "[RicControlMessage] set-bandwidth requires bandwidth value\n");
+            return;
+        }
+        
+        uint8_t bandwidth = static_cast<uint8_t>(bwValue);
+        // if (bandwidth == 0 || bandwidth > 255) {
+        //     fprintf(stderr, "[RicControlMessage] set-bandwidth: bandwidth must be between 1 and 255, got %u\n", bandwidth);
+        //     return;
+        // }
+        
+        ns3::Simulator::ScheduleNow([hasNodeId, nodeId, bandwidth]() {
+            using namespace ns3;
+            
+            Ptr<mmwave::MmWaveEnbNetDevice> enbDev = nullptr;
+            uint32_t foundNodeId = 0;
+            
+            if (hasNodeId && nodeId > 0) {
+                // Try the specified node first
+                if (nodeId < NodeList::GetNNodes()) {
+                    Ptr<Node> n = NodeList::GetNode(nodeId);
+                    if (n) {
+                        for (uint32_t i = 0; i < n->GetNDevices(); ++i) {
+                            enbDev = n->GetDevice(i)->GetObject<mmwave::MmWaveEnbNetDevice>();
+                            if (enbDev) {
+                                foundNodeId = nodeId;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // If not found and nodeId was specified, or if nodeId wasn't specified, search all nodes
+            if (!enbDev) {
+                for (uint32_t i = 0; i < NodeList::GetNNodes(); ++i) {
+                    Ptr<Node> n = NodeList::GetNode(i);
+                    if (!n) continue;
+                    
+                    for (uint32_t j = 0; j < n->GetNDevices(); ++j) {
+                        enbDev = n->GetDevice(j)->GetObject<mmwave::MmWaveEnbNetDevice>();
+                        if (enbDev) {
+                            foundNodeId = i;
+                            break;
+                        }
+                    }
+                    if (enbDev) break;
+                }
+            }
+            
+            if (!enbDev) {
+                fprintf(stderr, "[RicControlMessage] set-bandwidth: no MmWaveEnbNetDevice found in any node\n");
+                return;
+            }
+            
+            // Set bandwidth
+            enbDev->SetBandwidth(bandwidth);
+            fprintf(stderr, "[RicControlMessage] set-bandwidth: node %u bandwidth set to %u\n", foundNodeId, bandwidth);
         });
         return;
     }
