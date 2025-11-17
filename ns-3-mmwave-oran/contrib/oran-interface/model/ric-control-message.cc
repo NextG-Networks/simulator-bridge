@@ -115,6 +115,11 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
         return true;
     };
 
+    // --------------------------------------------------------------------------
+    // Control state shared with scheduler / E2 integration
+    // --------------------------------------------------------------------------
+    
+
     std::string cmd;
     if (!FindString(json, "\"cmd\"", cmd)) {
         fprintf(stderr, "[RicControlMessage] No 'cmd' in control JSON\n");
@@ -191,6 +196,10 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
         });
         return;
     }
+    
+    
+
+    
 
     if (cmd == "stop") {
         ns3::Simulator::ScheduleNow([]() {

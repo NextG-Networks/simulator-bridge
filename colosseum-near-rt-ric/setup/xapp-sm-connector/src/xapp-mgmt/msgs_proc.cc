@@ -45,7 +45,7 @@ bool XappMsgHandler::encode_subscription_delete_request(unsigned char* buffer, s
 	  bool res = e2ap_sub_req_del.encode_e2ap_subscription(&buffer[0], buf_len, sub_helper);
 	  if(! res){
 	    mdclog_write(MDCLOG_ERR, "%s, %d: Error encoding subscription delete request pdu. Reason = %s", __FILE__, __LINE__, e2ap_sub_req_del.get_error().c_str());
-	    return false;
+	    return false;move-enb
 	  }
 
 	return true;
