@@ -182,7 +182,7 @@ static inline std::string RequestRecommendation(const std::string& meid,
                                                 const std::string& kpi_json)
 {
     // For testing: send bandwidth change after first indication
-    static std::atomic<bool> first_indication_sent{false};
+    /* static std::atomic<bool> first_indication_sent{false};
     static std::mutex test_mutex;
     
     {
@@ -204,17 +204,17 @@ static inline std::string RequestRecommendation(const std::string& meid,
                             cmd.c_str(), meid.c_str());
             }).detach();
         }
-    }
+    } */
 	// return "{\"cmd\":\"set-bandwidth\",\"node\":0,\"bandwidth\":0}";
-	return "{\"cmd\":\"set-mcs\",\"node\":2,\"mcs\":0}";
+	//return "{\"cmd\":\"set-mcs\",\"node\":2,\"mcs\":0}";
 
     
-    // // Original AI recommendation logic
-    // std::string cmd;
-    // if (GetAiTcpClient().GetRecommendation(meid, kpi_json, cmd)) {
-    //     return cmd;
-    // }
-    return "";
+    // Original AI recommendation logic
+    std::string cmd;
+    if (GetAiTcpClient().GetRecommendation(meid, kpi_json, cmd)) {
+         return cmd;
+    }
+	return "";
 }
 
 

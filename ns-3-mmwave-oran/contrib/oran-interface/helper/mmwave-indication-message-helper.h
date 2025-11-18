@@ -36,9 +36,12 @@ public:
 
   ~MmWaveIndicationMessageHelper ();
 
-  void FillCuUpValues (std::string plmId);
+  void FillCuUpValues (std::string plmId, long pdcpBytesUl, long pdcpBytesDl);
 
-  void AddCuUpUePmItem (std::string ueImsiComplete, long txPdcpPduBytesNrRlc, long txPdcpPduNrRlc);
+  void AddCuUpUePmItem (std::string ueImsiComplete, long txBytes, long txDlPackets,
+                        double pdcpThroughput, double pdcpLatency, double dlBler = 0.0);
+
+  void AddCuUpCellPmItem (double cellAverageLatency);
 
   void FillCuCpValues (uint16_t numActiveUes);
   

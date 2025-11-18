@@ -162,7 +162,7 @@ static ns3::GlobalValue g_e2cuUp ("e2cuUp", "If true, send CU-UP reports", ns3::
 static ns3::GlobalValue g_e2cuCp ("e2cuCp", "If true, send CU-CP reports", ns3::BooleanValue (true),
                                   ns3::MakeBooleanChecker ());
 static ns3::GlobalValue g_reducedPmValues ("reducedPmValues", "If true, use a subset of the the pm containers",
-                                        ns3::BooleanValue (true), ns3::MakeBooleanChecker ());
+                                        ns3::BooleanValue (false), ns3::MakeBooleanChecker ());
 static ns3::GlobalValue
     g_hoSinrDifference ("hoSinrDifference",
                         "The value for which an handover between MmWave eNB is triggered",

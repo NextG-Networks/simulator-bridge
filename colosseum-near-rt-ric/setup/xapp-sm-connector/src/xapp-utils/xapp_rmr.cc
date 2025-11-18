@@ -61,6 +61,14 @@ void XappRmr::xapp_rmr_init(bool rmr_listen){
 	}
 	_rmr_is_ready = true;
 	mdclog_write(MDCLOG_INFO,"RMR Context is Ready, file= %s, line=%d",__FILE__,__LINE__);
+	
+	// Log RMR_SEED_RT for debugging
+	const char* rmr_seed_rt = getenv("RMR_SEED_RT");
+	if (rmr_seed_rt) {
+		mdclog_write(MDCLOG_INFO,"RMR_SEED_RT=%s", rmr_seed_rt);
+	} else {
+		mdclog_write(MDCLOG_WARN,"RMR_SEED_RT environment variable not set");
+	}
 
 	//Set the listener requirement
 	_listen = rmr_listen;
@@ -126,10 +134,19 @@ bool XappRmr::xapp_rmr_send(xapp_rmr_header *hdr, void *payload){
 		}
 		else
 		{
-			mdclog_write(MDCLOG_INFO,"Need to retry RMR: state=%d, attempt=%d, file=%s, line=%d",_xapp_send_buff->state, rmr_attempts,__FILE__,__LINE__);
+			// Log more details about the error
+			const char* state_str = "UNKNOWN";
+			if (_xapp_send_buff->state == RMR_ERR_NOENDPT) state_str = "RMR_ERR_NOENDPT (no endpoint found)";
+			else if (_xapp_send_buff->state == RMR_ERR_RETRY) state_str = "RMR_ERR_RETRY";
+			else if (_xapp_send_buff->state == RMR_ERR_SENDFAILED) state_str = "RMR_ERR_SENDFAILED";
+			else if (_xapp_send_buff->state == RMR_ERR_TIMEOUT) state_str = "RMR_ERR_TIMEOUT";
+			
+			mdclog_write(MDCLOG_INFO,"Need to retry RMR: state=%d (%s), mtype=%d, attempt=%d, file=%s, line=%d",
+			             _xapp_send_buff->state, state_str, _xapp_send_buff->mtype, rmr_attempts,__FILE__,__LINE__);
 			if(_xapp_send_buff->state == RMR_ERR_RETRY){
-				usleep(1);			}
-				rmr_attempts--;
+				usleep(1);
+			}
+			rmr_attempts--;
 		}
 		sleep(1);
 	}
