@@ -36,6 +36,7 @@
 
 #include "control-gateway.h"
 #include "ric-control-message.h"
+#include "ns3/core-module.h"
 
 
 
@@ -191,6 +192,121 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
         });
         return;
     }
+
+    if (cmd == "set-mcs") {
+        uint32_t mcsDl = 0;
+        uint32_t mcsUl = 0;
+        bool hasDl = FindUint(json, "\"dl\"", mcsDl);
+        bool hasUl = FindUint(json, "\"ul\"", mcsUl);
+
+        double fixedFlag = 0.0;
+        bool hasFixed = FindNumber(json, "\"fixed\"", fixedFlag);
+        bool fixed = hasFixed && (fixedFlag != 0.0);
+
+        if (!hasDl && !hasUl) {
+            fprintf(stderr,
+                    "[RicControlMessage] set-mcs requires at least one of 'dl' or 'ul'\n");
+            return;
+        }
+
+        // (Optional) sanity check of the range
+        auto CheckRange = [](uint32_t m) {
+            return m <= 28; // adjust if your MCS table is different
+        };
+        if ((hasDl && !CheckRange(mcsDl)) || (hasUl && !CheckRange(mcsUl))) {
+            fprintf(stderr,
+                    "[RicControlMessage] set-mcs got out-of-range MCS (dl=%u, ul=%u)\n",
+                    mcsDl, mcsUl);
+            return;
+        }
+
+        // Do the reconfiguration on the simulator thread
+        ns3::Simulator::ScheduleNow([hasDl, hasUl, mcsDl, mcsUl, fixed]() {
+            using namespace ns3;
+
+            // 1) Optionally enable/disable fixed MCS mode
+            if (fixed) {
+                Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::FixedMcsDl",
+                                   BooleanValue(true));
+                Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::FixedMcsUl",
+                                   BooleanValue(true));
+            }
+
+            // 2) Update default MCS values
+            if (hasDl) {
+                Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::McsDefaultDl",
+                                   UintegerValue(mcsDl));
+            }
+            if (hasUl) {
+                Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::McsDefaultUl",
+                                   UintegerValue(mcsUl));
+            }
+
+            fprintf(stderr,
+                    "[RicControlMessage] set-mcs: fixed=%d dl=%s ul=%s\n",
+                    fixed ? 1 : 0,
+                    hasDl ? std::to_string(mcsDl).c_str() : "-",
+                    hasUl ? std::to_string(mcsUl).c_str() : "-");
+        });
+
+        return;
+    }
+
+    if (cmd == "set-bler")
+    {
+        double bler = 0.0;
+        if (!FindNumber(json, "\"bler\"", bler))
+        {
+            fprintf(stderr,
+                    "[RicControlMessage] set-bler: missing 'bler' field in JSON\n");
+            return;
+        }
+
+        // sanity checks
+        if (bler <= 0.0 || bler >= 1.0)
+        {
+            fprintf(stderr,
+                    "[RicControlMessage] set-bler: invalid value %.6f (must be 0 < bler < 1)\n",
+                    bler);
+            return;
+        }
+
+        ns3::Simulator::ScheduleNow([bler]() {
+            using namespace ns3;
+
+            DoubleValue beforeVal;
+            DoubleValue afterVal;
+
+            // --- BEFORE: read current Ber from a fresh MmWaveAmc instance ---
+            {
+                ObjectFactory f;
+                f.SetTypeId("ns3::MmWaveAmc");
+                Ptr<Object> obj = f.Create<Object>();
+                obj->GetAttribute("Ber", beforeVal);
+            }
+
+            // Apply the new BLER/BER target (global default)
+            Config::SetDefault("ns3::MmWaveAmc::Ber", DoubleValue(bler));
+
+            // --- AFTER: read Ber again from a new MmWaveAmc instance ---
+            {
+                ObjectFactory f;
+                f.SetTypeId("ns3::MmWaveAmc");
+                Ptr<Object> obj = f.Create<Object>();
+                obj->GetAttribute("Ber", afterVal);
+            }
+
+            fprintf(stderr,
+                    "[RicControlMessage] set-bler: MmWaveAmc::Ber %.6g -> %.6g (requested %.6g)\n",
+                    beforeVal.Get(), afterVal.Get(), bler);
+        });
+
+        return;
+    }
+
+
+
+
 
     if (cmd == "stop") {
         ns3::Simulator::ScheduleNow([]() {

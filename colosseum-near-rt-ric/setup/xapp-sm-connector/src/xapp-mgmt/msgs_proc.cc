@@ -178,14 +178,24 @@ static inline void PublishKpiToExternal(const std::string& meid,
     GetAiTcpClient().SendKpi(meid, kpi_json);
 }
 
+// static inline std::string RequestRecommendation(const std::string& meid,
+//                                                 const std::string& kpi_json)
+// {
+//     std::string cmd;
+//     if (GetAiTcpClient().GetRecommendation(meid, kpi_json, cmd)) {
+//         return cmd;    // non-empty JSON command
+//     }
+//     return "";         // no action
+// }
+
+
+//just for testing, otherise use the commented out function above
 static inline std::string RequestRecommendation(const std::string& meid,
                                                 const std::string& kpi_json)
 {
-    std::string cmd;
-    if (GetAiTcpClient().GetRecommendation(meid, kpi_json, cmd)) {
-        return cmd;    // non-empty JSON command
-    }
-    return "";         // no action
+
+    return "({\"cmd\":\"set-bler\",\"bler\":0.01})", "gnb:131-133-31000000"
+;         
 }
 
 

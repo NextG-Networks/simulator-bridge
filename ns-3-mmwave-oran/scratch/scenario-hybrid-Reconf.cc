@@ -54,7 +54,7 @@ static GlobalValue g_e2cuCp ("e2cuCp","If true, send CU-CP reports",
 static GlobalValue g_indicationPeriodicity ("indicationPeriodicity","E2 Indication Periodicity (s)", 
                                             DoubleValue(0.1), MakeDoubleChecker<double>(0.01, 2.0));
 static GlobalValue g_e2TermIp ("e2TermIp","RIC E2 termination IP",
-                               StringValue("10.244.0.240"), MakeStringChecker());
+                               StringValue("10.0.2.10"), MakeStringChecker());
 static GlobalValue g_enableE2FileLogging ("enableE2FileLogging","Offline file logging instead of connecting to RIC",
                                           BooleanValue(true), MakeBooleanChecker());
 
@@ -273,6 +273,10 @@ Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::DlSchedOnly",
                    BooleanValue(false));
 Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::UlSchedOnly",
                    BooleanValue(false));
+
+
+Config::SetDefault("ns3::MmWaveAmc::Ber",
+                   DoubleValue(0.99));
 
 // Optional: static TTI
 Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::FixedTti",
