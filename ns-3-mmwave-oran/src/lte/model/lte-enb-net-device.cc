@@ -61,6 +61,8 @@
 #include <ns3/lte-ue-net-device.h>
 #include <ns3/mc-enb-pdcp.h>
 #include <ns3/node.h>
+#include <ns3/node-list.h>
+#include <ns3/onoff-application.h>
 #include <ns3/object-factory.h>
 #include <ns3/object-map.h>
 #include <ns3/packet-burst.h>
@@ -75,6 +77,9 @@
 #include <fstream>
 #include <numeric>
 #include <sstream>
+#include <algorithm>
+#include <dirent.h>
+#include <sys/stat.h>
 
 namespace ns3
 {
@@ -127,11 +132,42 @@ LteEnbNetDevice::GetCurrentDirectory()
 void
 LteEnbNetDevice::ReadControlFile()
 {
+    std::cout << "[NS3-CTRL] ReadControlFile() CALLED at time: " << Simulator::Now().GetMilliSeconds() 
+              << "ms for cellId=" << m_cellId << " filename='" << m_controlFilename << "'" << std::endl;
+    
+    NS_LOG_UNCOND(Simulator::Now().GetMilliSeconds()
+                << " [NS3-CTRL] Reading control file: " << m_controlFilename);
     NS_LOG_INFO(Simulator::Now().GetMilliSeconds()
                 << " I will try to read the control file " << m_controlFilename);
     // Open the control file and read control commands
+    std::cout << "[NS3-CTRL] ReadControlFile: m_controlFilename='" << m_controlFilename 
+              << "' m_useSemaphores=" << m_useSemaphores << std::endl;
+    
     if (m_controlFilename != "")
     {
+        // Extract directory from control filename
+        std::string controlDir = m_controlFilename;
+        size_t lastSlash = m_controlFilename.find_last_of('/');
+        if (lastSlash != std::string::npos)
+        {
+            controlDir = m_controlFilename.substr(0, lastSlash);
+        }
+        else
+        {
+            controlDir = "."; // Current directory if no path
+        }
+        
+        // List of all control files to check in the directory
+        std::vector<std::string> controlFiles = {
+            controlDir + "/qos_actions.csv",
+            controlDir + "/ts_actions_for_ns3.csv",
+            controlDir + "/es_actions_for_ns3.csv",
+            controlDir + "/enb_txpower_actions.csv",
+            controlDir + "/ue_txpower_actions.csv",
+            controlDir + "/cbr_actions.csv",
+            controlDir + "/prb_cap_actions.csv"
+        };
+        
         if (m_useSemaphores)
         {
             sem_t* metricsReadySemaphore = sem_open(m_metricsReadySemaphoreName.c_str(), 0);
@@ -160,18 +196,48 @@ LteEnbNetDevice::ReadControlFile()
             controlSemaphore = nullptr;
         }
 
-        // open the control file and read handover commands
-        if (m_controlFilename != "")
+        // Read all control files in the directory
+        for (const auto& filename : controlFiles)
         {
+            // Check if file exists and is readable
+            struct stat fileStat;
+            if (stat(filename.c_str(), &fileStat) != 0)
+            {
+                // File doesn't exist, skip it
+                continue;
+            }
+            
+            // Check if file is empty
+            if (fileStat.st_size == 0)
+            {
+                // Clear the modification time tracking for empty files
+                m_controlFileMtimes.erase(filename);
+                continue;
+            }
+            
+            // Check if file has been modified since last read
+            // Only read if modification time is newer than last read, or if we haven't read it before
+            auto it = m_controlFileMtimes.find(filename);
+            if (it != m_controlFileMtimes.end() && it->second >= fileStat.st_mtime)
+            {
+                // File hasn't changed since last read, skip it
+                continue;
+            }
+            
+            std::cout << "[NS3-CTRL] Attempting to open file: " << filename << std::endl;
             std::ifstream csv{};
-            csv.open(m_controlFilename.c_str(), std::ifstream::in);
+            csv.open(filename.c_str(), std::ifstream::in);
             if (!csv.is_open())
             {
-                NS_FATAL_ERROR("Can't open file " << m_controlFilename.c_str());
+                // File exists but can't be opened, skip it (don't fatal error)
+                std::cout << "[NS3-CTRL] Warning: Can't open control file: " << filename << " (skipping)" << std::endl;
+                continue;
             }
+            std::cout << "[NS3-CTRL] Successfully opened control file: " << filename << std::endl;
+            NS_LOG_UNCOND("[NS3-CTRL] Successfully opened control file: " << filename);
             std::string line;
 
-            if (m_controlFilename.find("ts_actions_for_ns3.csv") != std::string::npos)
+            if (filename.find("ts_actions_for_ns3.csv") != std::string::npos)
             { // TODO adapt to the scheduling of the messages
 
                 long long timestamp{};
@@ -183,29 +249,89 @@ LteEnbNetDevice::ReadControlFile()
                         // skip empty lines
                         continue;
                     }
+                    
+                    // Check if line has enough fields (at least 3 commas = 4 fields)
+                    size_t commaCount = std::count(line.begin(), line.end(), ',');
+                    if (commaCount < 2)
+                    {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping invalid handover line (not enough fields): " << line);
+                        continue;
+                    }
+                    
                     NS_LOG_INFO("Read handover command");
                     std::stringstream lineStream(line);
                     std::string cell;
 
                     std::getline(lineStream, cell, ',');
-                    timestamp = std::stoll(cell);
+                    if (cell.empty())
+                    {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping handover line with empty timestamp");
+                        continue;
+                    }
+                    try {
+                        timestamp = std::stoll(cell);
+                    } catch (const std::exception& e) {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping handover line with invalid timestamp: " << cell);
+                        continue;
+                    }
 
                     uint64_t imsi;
                     std::getline(lineStream, cell, ',');
-                    imsi = std::stoi(cell);
+                    if (cell.empty())
+                    {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping handover line with empty IMSI");
+                        continue;
+                    }
+                    try {
+                        imsi = std::stoull(cell);
+                    } catch (const std::exception& e) {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping handover line with invalid IMSI: " << cell);
+                        continue;
+                    }
 
                     uint16_t targetCellId;
                     std::getline(lineStream, cell, ',');
+                    if (cell.empty())
+                    {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping handover line with empty targetCellId");
+                        continue;
+                    }
                     // uncomment the next line if need to remove PLM ID, first 3 digits always 111
                     // cell.erase(0, 3);
-                    targetCellId = std::stoi(cell);
+                    try {
+                        targetCellId = std::stoi(cell);
+                    } catch (const std::exception& e) {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping handover line with invalid targetCellId: " << cell);
+                        continue;
+                    }
 
                     NS_LOG_INFO("Handover command for timestamp " << timestamp << " imsi " << imsi
                                                                   << " targetCellId "
                                                                   << targetCellId);
 
                     uint16_t rntiUe = m_rrc->GetRntiFromImsi(imsi);
-                    uint16_t sourceCellId = m_rrc->GetUeManager(rntiUe)->GetMmWaveCellId();
+                    if (rntiUe == 0)
+                    {
+                        NS_LOG_WARN("[NS3-CTRL] Could not find RNTI for IMSI " << imsi << ", skipping handover");
+                        continue;
+                    }
+                    
+                    // Check if UE exists in UeMap before accessing
+                    auto ueMap = m_rrc->GetUeMap();
+                    if (ueMap.find(rntiUe) == ueMap.end())
+                    {
+                        NS_LOG_WARN("[NS3-CTRL] RNTI " << rntiUe << " not found in UeMap for IMSI " << imsi << ", skipping handover");
+                        continue;
+                    }
+                    
+                    Ptr<UeManager> ueManager = m_rrc->GetUeManager(rntiUe);
+                    if (!ueManager)
+                    {
+                        NS_LOG_WARN("[NS3-CTRL] Could not get UeManager for RNTI " << rntiUe << ", skipping handover");
+                        continue;
+                    }
+                    
+                    uint16_t sourceCellId = ueManager->GetMmWaveCellId();
                     if (sourceCellId == targetCellId)
                     {
                         NS_LOG_WARN("Source CellId and Target CellId are the same "
@@ -222,7 +348,7 @@ LteEnbNetDevice::ReadControlFile()
                                                    targetCellId);
                 }
             }
-            else if (m_controlFilename.find("es_actions_for_ns3.csv") != std::string::npos)
+            else if (filename.find("es_actions_for_ns3.csv") != std::string::npos)
             {
                 long long timestamp{};
                 uint8_t counter = 0;
@@ -288,10 +414,12 @@ LteEnbNetDevice::ReadControlFile()
                     }
                 }
             }
-            else if (m_controlFilename.find("qos_actions.csv") != std::string::npos)
+            else if (filename.find("qos_actions.csv") != std::string::npos)
             { // TODO adapt to the scheduling of the messages
+                std::cout << "[NS3-CTRL] Found QoS control file, reading commands..." << std::endl;
                 long long timestamp{};
                 std::unordered_map<uint16_t, double> uePercentages{};
+                NS_LOG_UNCOND("[NS3-CTRL] Found QoS control file, reading commands...");
                 NS_LOG_INFO("Read QoS command");
                 while (std::getline(csv, line))
                 {
@@ -322,45 +450,396 @@ LteEnbNetDevice::ReadControlFile()
                     }
                     else
                     {
+                        std::cout << "[NS3-CTRL] Parsed QoS command: RNTI=" << ueId << " percentage=" << uePerc << std::endl;
+                        NS_LOG_UNCOND("[NS3-CTRL] Parsed QoS command: RNTI=" << ueId << " percentage=" << uePerc);
                         NS_LOG_INFO("Set ue percentage command with timestamp "
                                     << timestamp << " ueId " << ueId << "percentage" << uePerc);
                         uePercentages.insert({ueId, uePerc});
                     }
                 }
 
+                std::cout << "[NS3-CTRL] Parsed " << uePercentages.size() << " QoS commands, checking UeMap..." << std::endl;
                 auto ueMap = m_rrc->GetUeMap();
-                for (std::pair<uint64_t, double> uePercentage : uePercentages)
+                std::cout << "[NS3-CTRL] UeMap has " << ueMap.size() << " UEs. RNTIs: ";
+                for (std::pair<uint16_t, ns3::Ptr<ns3::UeManager>> ue : ueMap)
                 {
-                    uint16_t ueId = m_rrc->GetRntiFromImsi(uePercentage.first);
+                    std::cout << ue.first << " ";
+                }
+                std::cout << std::endl;
+                
+                for (std::pair<uint16_t, double> uePercentage : uePercentages)
+                {
+                    uint16_t ueId = uePercentage.first; // Already RNTI (xApp converts IMSI->RNTI)
+                    std::cout << "[NS3-CTRL] Looking for RNTI=" << ueId << " in UeMap..." << std::endl;
                     if (ueMap.find(ueId) == ueMap.end())
                     {
+                        std::cout << "[NS3-CTRL] WARNING: RNTI=" << ueId << " not found in UeMap. Available RNTIs: ";
+                        for (std::pair<uint16_t, ns3::Ptr<ns3::UeManager>> ue : ueMap)
+                        {
+                            std::cout << ue.first << " ";
+                        }
+                        std::cout << std::endl;
                         NS_LOG_ERROR(ueId << " not found in UeMap");
                         NS_LOG_ERROR("Current map status:");
                         for (std::pair<uint16_t, ns3::Ptr<ns3::UeManager>> ue : ueMap)
                         {
                             NS_LOG_ERROR(ue.first);
                         }
-                        NS_FATAL_ERROR("Wrong UE RNTI passed by the controller, aborting...");
+                        NS_LOG_WARN("Skipping QoS command for unknown RNTI: " << ueId);
+                        continue; // Skip instead of fatal error
                     }
                     double percentage = uePercentage.second;
+                    std::cout << "[NS3-CTRL] Applying QoS: RNTI=" << ueId << " percentage=" << percentage << std::endl;
+                    NS_LOG_UNCOND("[NS3-CTRL] Applying QoS: RNTI=" << ueId << " percentage=" << percentage);
                     this->SetUeQoS(ueId, percentage);
+                }
+            }
+            else if (filename.find("enb_txpower_actions.csv") != std::string::npos)
+            {
+                std::cout << "[NS3-CTRL] Found eNB TX power control file, reading commands..." << std::endl;
+                NS_LOG_UNCOND("[NS3-CTRL] Found eNB TX power control file, reading commands...");
+                
+                while (std::getline(csv, line))
+                {
+                    if (line == "")
+                    {
+                        continue;
+                    }
+                    
+                    // Check if line has enough fields
+                    size_t commaCount = std::count(line.begin(), line.end(), ',');
+                    if (commaCount < 2)
+                    {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping invalid eNB TX power line (not enough fields): " << line);
+                        continue;
+                    }
+                    
+                    std::stringstream lineStream(line);
+                    std::string data;
+                    
+                    std::getline(lineStream, data, ',');
+                    if (data.empty()) continue;
+                    long long timestamp{};
+                    try {
+                        timestamp = std::stoll(data);
+                    } catch (const std::exception& e) {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping eNB TX power line with invalid timestamp: " << data);
+                        continue;
+                    }
+                    
+                    uint16_t cellId;
+                    std::getline(lineStream, data, ',');
+                    if (data.empty()) continue;
+                    try {
+                        cellId = std::stoi(data);
+                    } catch (const std::exception& e) {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping eNB TX power line with invalid cellId: " << data);
+                        continue;
+                    }
+                    
+                    double dbm;
+                    std::getline(lineStream, data, ',');
+                    if (data.empty()) continue;
+                    try {
+                        dbm = std::stod(data);
+                    } catch (const std::exception& e) {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping eNB TX power line with invalid dbm: " << data);
+                        continue;
+                    }
+                    
+                    // Only apply if this is our cell
+                    if (cellId == m_cellId)
+                    {
+                        std::cout << "[NS3-CTRL] Applying eNB TX Power: cellId=" << cellId << " dbm=" << dbm << std::endl;
+                        NS_LOG_UNCOND("[NS3-CTRL] Applying eNB TX Power: cellId=" << cellId << " dbm=" << dbm);
+                        Ptr<LteEnbPhy> phy = GetPhy();
+                        if (phy)
+                        {
+                            phy->SetAttribute("TxPower", DoubleValue(dbm));
+                        }
+                        else
+                        {
+                            NS_LOG_ERROR("[NS3-CTRL] Failed to get eNB PHY for TX power setting");
+                        }
+                    }
+                }
+            }
+            else if (filename.find("ue_txpower_actions.csv") != std::string::npos)
+            {
+                std::cout << "[NS3-CTRL] Found UE TX power control file, reading commands..." << std::endl;
+                NS_LOG_UNCOND("[NS3-CTRL] Found UE TX power control file, reading commands...");
+                auto ueMap = m_rrc->GetUeMap();
+                
+                while (std::getline(csv, line))
+                {
+                    if (line == "")
+                    {
+                        continue;
+                    }
+                    
+                    // Check if line has enough fields
+                    size_t commaCount = std::count(line.begin(), line.end(), ',');
+                    if (commaCount < 2)
+                    {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping invalid UE TX power line (not enough fields): " << line);
+                        continue;
+                    }
+                    
+                    std::stringstream lineStream(line);
+                    std::string data;
+                    
+                    std::getline(lineStream, data, ',');
+                    if (data.empty()) continue;
+                    long long timestamp{};
+                    try {
+                        timestamp = std::stoll(data);
+                    } catch (const std::exception& e) {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping UE TX power line with invalid timestamp: " << data);
+                        continue;
+                    }
+                    
+                    uint16_t rnti;
+                    std::getline(lineStream, data, ',');
+                    if (data.empty()) continue;
+                    try {
+                        rnti = std::stoi(data);
+                    } catch (const std::exception& e) {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping UE TX power line with invalid RNTI: " << data);
+                        continue;
+                    }
+                    
+                    double dbm;
+                    std::getline(lineStream, data, ',');
+                    if (data.empty()) continue;
+                    try {
+                        dbm = std::stod(data);
+                    } catch (const std::exception& e) {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping UE TX power line with invalid dbm: " << data);
+                        continue;
+                    }
+                    
+                    if (ueMap.find(rnti) != ueMap.end())
+                    {
+                        std::cout << "[NS3-CTRL] Applying UE TX Power: RNTI=" << rnti << " dbm=" << dbm << std::endl;
+                        NS_LOG_UNCOND("[NS3-CTRL] Applying UE TX Power: RNTI=" << rnti << " dbm=" << dbm);
+                        
+                        // Get IMSI from RNTI, then find UE node
+                        uint64_t imsi = m_rrc->GetImsiFromRnti(rnti);
+                        if (imsi != 0)
+                        {
+                            // Find UE node by iterating NodeList
+                            for (uint32_t i = 0; i < NodeList::GetNNodes(); ++i)
+                            {
+                                Ptr<Node> node = NodeList::GetNode(i);
+                                for (uint32_t j = 0; j < node->GetNDevices(); ++j)
+                                {
+                                    Ptr<LteUeNetDevice> ueDev = node->GetDevice(j)->GetObject<LteUeNetDevice>();
+                                    if (ueDev && ueDev->GetImsi() == imsi)
+                                    {
+                                        Ptr<LteUePhy> uePhy = ueDev->GetPhy();
+                                        if (uePhy)
+                                        {
+                                            uePhy->SetAttribute("TxPower", DoubleValue(dbm));
+                                            std::cout << "[NS3-CTRL] Successfully set UE TX power for RNTI=" << rnti << " IMSI=" << imsi << std::endl;
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            NS_LOG_WARN("[NS3-CTRL] Could not find IMSI for RNTI=" << rnti);
+                        }
+                    }
+                    else
+                    {
+                        NS_LOG_WARN("[NS3-CTRL] RNTI=" << rnti << " not found in UeMap, skipping TX power command");
+                    }
+                }
+            }
+            else if (filename.find("cbr_actions.csv") != std::string::npos)
+            {
+                std::cout << "[NS3-CTRL] Found CBR control file, reading commands..." << std::endl;
+                NS_LOG_UNCOND("[NS3-CTRL] Found CBR control file, reading commands...");
+                
+                while (std::getline(csv, line))
+                {
+                    if (line == "")
+                    {
+                        continue;
+                    }
+                    
+                    std::stringstream lineStream(line);
+                    std::string data;
+                    
+                    std::getline(lineStream, data, ',');
+                    if (data.empty()) continue;
+                    long long timestamp{};
+                    try {
+                        timestamp = std::stoll(data);
+                    } catch (const std::exception& e) {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping CBR line with invalid timestamp: " << data);
+                        continue;
+                    }
+                    
+                    std::string rate;
+                    std::getline(lineStream, data, ',');
+                    if (!data.empty())
+                    {
+                        rate = data;
+                    }
+                    
+                    std::string pktBytes;
+                    std::getline(lineStream, data, ',');
+                    if (!data.empty())
+                    {
+                        pktBytes = data;
+                    }
+                    
+                    // Find all OnOffApplication instances and update them
+                    // Search through all nodes
+                    for (uint32_t i = 0; i < NodeList::GetNNodes(); ++i)
+                    {
+                        Ptr<Node> node = NodeList::GetNode(i);
+                        for (uint32_t j = 0; j < node->GetNApplications(); ++j)
+                        {
+                            Ptr<Application> app = node->GetApplication(j);
+                            Ptr<OnOffApplication> onoffApp = DynamicCast<OnOffApplication>(app);
+                            if (onoffApp)
+                            {
+                                if (!rate.empty())
+                                {
+                                    std::cout << "[NS3-CTRL] Setting CBR rate to " << rate << " for application on node " << i << std::endl;
+                                    NS_LOG_UNCOND("[NS3-CTRL] Setting CBR rate to " << rate);
+                                    onoffApp->SetAttribute("DataRate", StringValue(rate));
+                                }
+                                if (!pktBytes.empty())
+                                {
+                                    uint32_t pktSize = std::stoul(pktBytes);
+                                    std::cout << "[NS3-CTRL] Setting CBR packet size to " << pktSize << " for application on node " << i << std::endl;
+                                    NS_LOG_UNCOND("[NS3-CTRL] Setting CBR packet size to " << pktSize);
+                                    onoffApp->SetAttribute("PacketSize", UintegerValue(pktSize));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else if (filename.find("prb_cap_actions.csv") != std::string::npos)
+            {
+                std::cout << "[NS3-CTRL] Found PRB cap control file, reading commands..." << std::endl;
+                NS_LOG_UNCOND("[NS3-CTRL] Found PRB cap control file, reading commands...");
+                auto ueMap = m_rrc->GetUeMap();
+                std::unordered_map<uint16_t, uint32_t> uePrbCaps{};
+                
+                while (std::getline(csv, line))
+                {
+                    if (line == "")
+                    {
+                        continue;
+                    }
+                    
+                    // Check if line has enough fields
+                    size_t commaCount = std::count(line.begin(), line.end(), ',');
+                    if (commaCount < 2)
+                    {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping invalid PRB cap line (not enough fields): " << line);
+                        continue;
+                    }
+                    
+                    std::stringstream lineStream(line);
+                    std::string data;
+                    
+                    std::getline(lineStream, data, ',');
+                    if (data.empty()) continue;
+                    long long timestamp{};
+                    try {
+                        timestamp = std::stoll(data);
+                    } catch (const std::exception& e) {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping PRB cap line with invalid timestamp: " << data);
+                        continue;
+                    }
+                    
+                    uint16_t rnti;
+                    std::getline(lineStream, data, ',');
+                    if (data.empty()) continue;
+                    try {
+                        rnti = std::stoi(data);
+                    } catch (const std::exception& e) {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping PRB cap line with invalid RNTI: " << data);
+                        continue;
+                    }
+                    
+                    uint32_t maxPrb;
+                    std::getline(lineStream, data, ',');
+                    if (data.empty()) continue;
+                    try {
+                        maxPrb = std::stoul(data);
+                    } catch (const std::exception& e) {
+                        NS_LOG_WARN("[NS3-CTRL] Skipping PRB cap line with invalid maxPrb: " << data);
+                        continue;
+                    }
+                    
+                    if (ueMap.find(rnti) != ueMap.end())
+                    {
+                        std::cout << "[NS3-CTRL] Parsed PRB cap command: RNTI=" << rnti << " maxPrb=" << maxPrb << std::endl;
+                        NS_LOG_UNCOND("[NS3-CTRL] Parsed PRB cap command: RNTI=" << rnti << " maxPrb=" << maxPrb);
+                        uePrbCaps.insert({rnti, maxPrb});
+                    }
+                    else
+                    {
+                        NS_LOG_WARN("[NS3-CTRL] RNTI=" << rnti << " not found in UeMap, skipping PRB cap command");
+                    }
+                }
+                
+                // Apply PRB caps
+                // Note: This requires scheduler support. For now, we'll store it and log.
+                // The scheduler would need to be modified to respect these caps.
+                for (const auto& cap : uePrbCaps)
+                {
+                    uint16_t rnti = cap.first;
+                    uint32_t maxPrb = cap.second;
+                    std::cout << "[NS3-CTRL] PRB Cap: RNTI=" << rnti << " maxPrb=" << maxPrb 
+                              << " (Note: Scheduler modification needed for full support)" << std::endl;
+                    NS_LOG_UNCOND("[NS3-CTRL] PRB Cap: RNTI=" << rnti << " maxPrb=" << maxPrb);
+                    // TODO: Store PRB cap in a map that the scheduler can access
+                    // For now, this is a placeholder - scheduler would need to check this map
                 }
             }
             else
             {
-                NS_FATAL_ERROR(
-                    "Unknown use case not implemented yet with filename: " << m_controlFilename);
+                // Unknown file type, skip it (don't fatal error)
+                std::cout << "[NS3-CTRL] Warning: Unknown control file type: " << filename << " (skipping)" << std::endl;
             }
 
             csv.close();
+
+            // Update modification time tracking AFTER reading (prevents re-reading same file)
+            // Use the original fileStat.st_mtime we captured before reading
+            m_controlFileMtimes[filename] = fileStat.st_mtime;
 
             if (!m_scheduleControlMessages)
             { // no need to delete stuff in this mode
                 // This clears the written file without deleting the OS file reference.
                 std::ofstream csvDelete{};
-                csvDelete.open(m_controlFilename.c_str());
+                csvDelete.open(filename.c_str(), std::ios::trunc);
+                csvDelete.close();
+                
+                // After clearing, update modification time to the new cleared file's time
+                // This ensures we don't re-read the cleared file
+                struct stat newStat;
+                if (stat(filename.c_str(), &newStat) == 0)
+                {
+                    m_controlFileMtimes[filename] = newStat.st_mtime;
+                }
+                else
+                {
+                    // File doesn't exist anymore, remove from tracking
+                    m_controlFileMtimes.erase(filename);
+                }
 
-                NS_LOG_INFO("File flushed");
+                NS_LOG_INFO("File flushed: " << filename);
             }
         }
 
@@ -896,6 +1375,7 @@ LteEnbNetDevice::ReportCurrentCellRsrpSinr(Ptr<LteEnbNetDevice> netDev,
     // NS_LOG_UNCOND ("RegisterNewSinrReadingCallback rnti" << std::to_string(rnti)<< " imsi "<<
     // std::to_string(imsi));
     netDev->RegisterNewSinrReading(imsi, cellId, sinr);
+    netDev->RegisterNewRsrpReading(imsi, cellId, rsrp);
 }
 
 void
@@ -917,6 +1397,25 @@ LteEnbNetDevice::RegisterNewSinrReading(uint64_t imsi, uint16_t cellId, long dou
                  << m_l3sinrMap[imsiCid]);
 }
 
+void
+LteEnbNetDevice::RegisterNewRsrpReading(uint64_t imsi, uint16_t cellId, double rsrp)
+{
+    if (!m_sendCuCp)
+    {
+        return;
+    }
+
+    // Create key
+    ImsiCellIdPair_t imsiCid{imsi, cellId};
+
+    // We only need to save the last value, so we do not care about overwriting or not
+    m_l3rsrpMap[imsiCid] = rsrp;
+
+    NS_LOG_LOGIC(Simulator::Now().GetSeconds()
+                 << " enbdev " << m_cellId << " UE " << imsi << " report for " << cellId << " RSRP "
+                 << m_l3rsrpMap[imsiCid] << " dBm");
+}
+
 bool
 LteEnbNetDevice::Send(Ptr<Packet> packet, const Address& dest, uint16_t protocolNumber)
 {
@@ -932,6 +1431,8 @@ void
 LteEnbNetDevice::UpdateConfig(void)
 {
     NS_LOG_FUNCTION(this);
+    std::cout << "[NS3-CTRL-DEBUG] UpdateConfig called for cellId=" << m_cellId 
+              << " m_controlFilename='" << m_controlFilename << "'" << std::endl;
 
     if (m_isConstructed)
     {
@@ -948,6 +1449,9 @@ LteEnbNetDevice::UpdateConfig(void)
                           << " and CSG indication " << m_csgIndication);
         m_rrc->SetCsgId(m_csgId, m_csgIndication);
 
+        NS_LOG_UNCOND("[NS3-CTRL] UpdateConfig called: m_e2term=" << (m_e2term ? "SET" : "NULL") 
+                    << " m_controlFilename='" << m_controlFilename << "' cellId=" << m_cellId);
+        
         if (m_e2term)
         {
             NS_LOG_DEBUG("E2sim start in cell " << m_cellId << " force CSV logging "
@@ -956,6 +1460,21 @@ LteEnbNetDevice::UpdateConfig(void)
             if (!m_forceE2FileLogging)
             {
                 Simulator::Schedule(MicroSeconds(0), &E2Termination::Start, m_e2term);
+                
+                // Schedule control file reading even when connected to RIC (if control file is specified)
+                NS_LOG_UNCOND("[NS3-CTRL] UpdateConfig: m_controlFilename='" << m_controlFilename 
+                            << "' m_e2Periodicity=" << m_e2Periodicity << " cellId=" << m_cellId);
+                if (m_controlFilename != "")
+                {
+                    Time e2ControlPeriodicity = Seconds(m_e2Periodicity) + MilliSeconds(5);
+                    NS_LOG_UNCOND("[NS3-CTRL] Scheduling control file read for: " << m_controlFilename 
+                                << " at time: " << e2ControlPeriodicity.GetMilliSeconds() << "ms");
+                    Simulator::Schedule(e2ControlPeriodicity, &LteEnbNetDevice::ReadControlFile, this);
+                }
+                else
+                {
+                    NS_LOG_UNCOND("[NS3-CTRL] No control filename set (empty), skipping control file reading");
+                }
             }
             else
             { // give some time for the simulation to start, TODO check value
@@ -1034,7 +1553,10 @@ LteEnbNetDevice::UpdateConfig(void)
 
                     // This is needed when the output of the simulation and the control file are
                     // saved in a different folder from the ns-3 one
-                    m_controlFilename = currentDirectory + '/' + m_controlFilename;
+                    // Only prepend directory if path is not absolute
+                    if (m_controlFilename.empty() || m_controlFilename[0] != '/') {
+                        m_controlFilename = currentDirectory + '/' + m_controlFilename;
+                    }
                     NS_LOG_INFO("The filename of the control file is " << m_controlFilename);
                 }
 
@@ -1068,6 +1590,10 @@ LteEnbNetDevice::SetE2Termination(Ptr<E2Termination> e2term)
 {
     m_e2term = e2term;
 
+    std::cout << "[NS3-CTRL-DEBUG] SetE2Termination called for cellId=" << m_cellId 
+              << " m_controlFilename='" << m_controlFilename << "'"
+              << " m_isConstructed=" << m_isConstructed << std::endl;
+
     NS_LOG_DEBUG("Register E2SM");
 
     if (!m_forceE2FileLogging)
@@ -1084,6 +1610,26 @@ LteEnbNetDevice::SetE2Termination(Ptr<E2Termination> e2term)
                                          std::bind(&LteEnbNetDevice::ControlMessageReceivedCallback,
                                                    this,
                                                    std::placeholders::_1));
+        
+        // Schedule control file reading if filename is set (e2term is now available)
+        // Note: We don't need to check m_isConstructed - scheduling can happen before construction
+        if (m_controlFilename != "")
+        {
+            Time e2ControlPeriodicity = Seconds(m_e2Periodicity) + MilliSeconds(5);
+            double scheduled_time_ms = e2ControlPeriodicity.GetMilliSeconds();
+            double current_time_ms = Simulator::Now().GetMilliSeconds();
+            NS_LOG_UNCOND("[NS3-CTRL] SetE2Termination: Scheduling control file read for: " << m_controlFilename 
+                        << " at time: " << scheduled_time_ms << "ms (current: " << current_time_ms 
+                        << "ms, cellId=" << m_cellId << ", e2Periodicity=" << m_e2Periodicity << ")");
+            std::cout << "[NS3-CTRL] SetE2Termination: Scheduling control file read for: " << m_controlFilename 
+                      << " at time: " << scheduled_time_ms << "ms (current: " << current_time_ms 
+                      << "ms, cellId=" << m_cellId << ", e2Periodicity=" << m_e2Periodicity << ")" << std::endl;
+            Simulator::Schedule(e2ControlPeriodicity, &LteEnbNetDevice::ReadControlFile, this);
+        }
+        else
+        {
+            std::cout << "[NS3-CTRL-DEBUG] SetE2Termination: NOT scheduling - filename is empty" << std::endl;
+        }
     }
 }
 
@@ -1167,9 +1713,19 @@ LteEnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
 
         uint64_t txE2DlPduRlc = m_e2RlcStatsCalculator->GetDlTxPackets(imsi, 3);
         uint64_t txE2DlBytesRlc = std::round( m_e2RlcStatsCalculator->GetDlTxData(imsi, 3) * 8 / 1e3); // in kbit, not byte
+        
+        // Calculate BLER from RLC stats: BLER = 1.0 - (rxPackets / txPackets)
+        double dlBler = 0.0;
+        uint64_t rxE2DlPduRlc = m_e2RlcStatsCalculator->GetDlRxPackets(imsi, 3);
+        if (txE2DlPduRlc > 0)
+        {
+            dlBler = 1.0 - (static_cast<double>(rxE2DlPduRlc) / static_cast<double>(txE2DlPduRlc));
+            dlBler = std::max(0.0, std::min(1.0, dlBler)); // Clamp between 0 and 1
+        }
 
         NS_LOG_INFO("ue id " << std::to_string(imsi) << " txE2DlPduRlc " << std::to_string(txE2DlPduRlc));
         NS_LOG_INFO("ue id " << std::to_string(imsi) << " txE2DlBytesRlc " << std::to_string(txE2DlBytesRlc));
+        NS_LOG_INFO("ue id " << std::to_string(imsi) << " rxE2DlPduRlc " << std::to_string(rxE2DlPduRlc) << " BLER " << dlBler);
 
         for (auto drb : drbMap)
         {
@@ -1234,17 +1790,20 @@ LteEnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
                                                      txBytes,
                                                      txDlPackets,
                                                      pdcpThroughput,
-                                                     pdcpLatency);
+                                                     pdcpLatency,
+                                                     dlBler);
         }
 
         // We include here the NR RLC PDU and Bytes even though it is LTE since they traces are not working properly
         // To remove them from the report, remove last two elements keeping commas
+        // Added BLER at the end
         uePmString.insert(std::make_pair(
             imsi,
             std::to_string(txBytes) + "," + std::to_string(txDlPackets) + "," +
                 std::to_string(pdcpThroughput) + "," + std::to_string(pdcpLatency) + "," + 
                 std::to_string(txPdcpPduLteRlc) + "," + std::to_string(txPdcpPduBytesLteRlc)
-                + "," + std::to_string(txPdcpPduBytesNrRlc)+ "," + std::to_string(txPdcpPduNrRlc)));
+                + "," + std::to_string(txPdcpPduBytesNrRlc)+ "," + std::to_string(txPdcpPduNrRlc)
+                + "," + std::to_string(dlBler)));
     }
 
     // get average cell latency
@@ -1398,15 +1957,25 @@ LteEnbNetDevice::BuildRicIndicationMessageCuCp(std::string plmId)
 
             auto uePms = uePmString.find(imsi)->second;
 
-            // SINR for the same cell
+            // SINR and RSRP for the same cell
             ImsiCellIdPair_t cid{imsi, m_cellId};
-            double sinrThisCell = 10 * std::log10(m_l3sinrMap[cid]);
+            double sinrThisCell = 0.0;
+            double rsrpThisCell = 0.0;
+            if (m_l3sinrMap.find(cid) != m_l3sinrMap.end())
+            {
+                sinrThisCell = 10 * std::log10(m_l3sinrMap[cid]);
+            }
+            if (m_l3rsrpMap.find(cid) != m_l3rsrpMap.end())
+            {
+                rsrpThisCell = m_l3rsrpMap[cid];
+            }
             double convertedSinr = L3RrcMeasurements::ThreeGppMapSinr(sinrThisCell);
 
             std::string to_print =
                 std::to_string(timestamp) + "," + ueImsiComplete + "," + std::to_string(ueMapSize) +
                 "," + std::to_string(meanRrcUes)+ "," + uePms + "," + std::to_string(m_cellId) + "," +
-                std::to_string(sinrThisCell) + "," + std::to_string(convertedSinr) + "\n";
+                std::to_string(sinrThisCell) + "," + std::to_string(convertedSinr) + "," +
+                std::to_string(rsrpThisCell) + "\n";
 
             // NS_LOG_DEBUG(to_print);
 

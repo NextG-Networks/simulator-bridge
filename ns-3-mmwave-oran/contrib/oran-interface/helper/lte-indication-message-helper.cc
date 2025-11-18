@@ -38,7 +38,7 @@ LteIndicationMessageHelper::LteIndicationMessageHelper (IndicationMessageType ty
 void
 LteIndicationMessageHelper::AddCuUpUePmItem (std::string ueImsiComplete, long txBytes,
                                              long txDlPackets, double pdcpThroughput,
-                                             double pdcpLatency)
+                                             double pdcpLatency, double dlBler)
 {
   Ptr<MeasurementItemList> ueVal = Create<MeasurementItemList> (ueImsiComplete);
 
@@ -55,6 +55,10 @@ LteIndicationMessageHelper::AddCuUpUePmItem (std::string ueImsiComplete, long tx
 
       //UE-specific Downlink IP combined EN-DC throughput from LTE eNB
       ueVal->AddItem<double> ("DRB.PdcpSduDelayDl.UEID", pdcpLatency);
+
+      // UE-specific Downlink Block Error Rate (BLER) - percentage (0.0 to 100.0)
+      // Always include BLER (even if 0.0) for consistency
+      ueVal->AddItem<double> ("DRB.BlerDl.UEID", dlBler * 100.0);  // Convert to percentage
     }
 
   m_msgValues.m_ueIndications.insert (ueVal);

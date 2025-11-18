@@ -55,6 +55,8 @@ build_lib(
                  helper/mmwave-indication-message-helper.h
     LIBRARIES_TO_LINK 
                     ${libcore}
+                    ${libmobility}
+                    ${libnetwork}
                     ${e2sim_LIBRARIES}
 )
 

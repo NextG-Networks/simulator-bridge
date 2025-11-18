@@ -31,6 +31,30 @@
 
 #include "ai_tcp_client.h"
 
+// E2SM (HelloWorld) indication decode support available in this repo
+#include "../xapp-asn/e2sm/e2sm_indication.hpp"
+// E2SM-KPM ASN.1 types (from asn1c_defs)
+extern "C" {
+#include "asn_application.h"
+#include "E2SM-KPM-IndicationHeader.h"
+#include "E2SM-KPM-IndicationMessage.h"
+#include "E2SM-KPM-IndicationMessage-Format1.h"
+#include "PM-Info-Item.h"
+#include "MeasurementType.h"
+#include "MeasurementValue.h"
+#include "PerUE-PM-Item.h"
+#include "UE-Identity.h"
+#include "L3-RRC-Measurements.h"
+#include "MeasQuantityResults.h"
+#include "ServingCellMeasurements.h"
+#include "MeasResultNeighCells.h"
+#include "MeasResultServMOList.h"
+#include "MeasResultServMO.h"
+#include "MeasResultNR.h"
+#include "MeasResultListNR.h"
+#include "MeasResultPCell.h"
+#include "RRCEvent.h"
+}
 
 bool XappMsgHandler::encode_subscription_delete_request(unsigned char* buffer, size_t *buf_len){
 
@@ -147,19 +171,6 @@ bool  XappMsgHandler::a1_policy_handler(char * message, int *message_len, a1_pol
     return false;
  }
 
- static void dump_hex_ascii(const void* data, size_t len) {
-    auto* p = static_cast<const uint8_t*>(data);
-    std::string ascii;
-    for (size_t i = 0; i < len; ++i) {
-        if (i % 16 == 0) {
-            if (!ascii.empty()) { mdclog_write(MDCLOG_INFO, "    %s", ascii.c_str()); ascii.clear(); }
-            mdclog_write(MDCLOG_INFO, "%04zx: ", i);
-        }
-        mdclog_write(MDCLOG_INFO, "%02x ", p[i]);
-        ascii.push_back((p[i] >= 32 && p[i] <= 126) ? char(p[i]) : '.');
-    }
-    if (!ascii.empty()) mdclog_write(MDCLOG_INFO, "    %s", ascii.c_str());
-}
 
 static inline void PublishKpiToExternal(const std::string& meid,
                                         const std::string& kpi_json)
@@ -200,7 +211,7 @@ void XappMsgHandler::operator()(rmr_mbuf_t *message, bool *resend){
 		case RIC_INDICATION: {
 			mdclog_write(MDCLOG_INFO, "Received RIC indication message of type = %d", message->mtype);
 
-			unsigned char* me_id_null;
+			unsigned char* me_id_null = nullptr;
 			unsigned char* me_id = rmr_get_meid(message, me_id_null);
 			if (me_id == nullptr) {
 				mdclog_write(MDCLOG_ERR, "RIC_INDICATION missing MEID; ignoring");
@@ -208,20 +219,24 @@ void XappMsgHandler::operator()(rmr_mbuf_t *message, bool *resend){
 			}
 
 			std::string meid_str(reinterpret_cast<char*>(me_id));
-			std::string kpi_blob(reinterpret_cast<char*>(message->payload), message->len);
 
-			// (Optional) keep any existing local processing you had
-			process_ric_indication(message->mtype, me_id, message->payload, message->len);
+			// Decode E2SM and get decoded JSON
+			std::string decoded_json = process_ric_indication(message->mtype, me_id, message->payload, message->len);
 
-			// 1) Forward KPI to external system (non-blocking)
-			PublishKpiToExternal(meid_str, kpi_blob);
+			// 1) Forward decoded KPI to external system (non-blocking)
+			// Only send if we successfully decoded, otherwise skip (don't send raw hex)
+			if (!decoded_json.empty()) {
+				PublishKpiToExternal(meid_str, decoded_json);
+			} else {
+				mdclog_write(MDCLOG_WARN, "Failed to decode E2SM message for MEID=%s, skipping", meid_str.c_str());
+			}
 
 			// 2) Ask external system for recommendation on a detached worker
 			//    so we never block the RMR receive thread.
-			if (send_ctrl_) {
-				std::thread([this, meid_str, kpi_blob]() {
+			if (send_ctrl_ && !decoded_json.empty()) {
+				std::thread([this, meid_str, decoded_json]() {
 					// Blocking call into your external brain; replace stub later
-					std::string cmd_json = RequestRecommendation(meid_str, kpi_blob);
+					std::string cmd_json = RequestRecommendation(meid_str, decoded_json);
 
 					if (!cmd_json.empty()) {
 						mdclog_write(MDCLOG_INFO, "[REC←EXT] MEID=%s cmd=%s",
@@ -243,7 +258,7 @@ void XappMsgHandler::operator()(rmr_mbuf_t *message, bool *resend){
 		case (RIC_SUB_RESP): {
         		mdclog_write(MDCLOG_INFO, "Received subscription message of type = %d", message->mtype);
 
-				unsigned char *me_id_null;
+				unsigned char *me_id_null = nullptr;
 				unsigned char *me_id = rmr_get_meid(message, me_id_null);
 				mdclog_write(MDCLOG_INFO,"RMR Received MEID: %s",me_id);
 
@@ -280,7 +295,7 @@ void XappMsgHandler::operator()(rmr_mbuf_t *message, bool *resend){
 
 };
 
-void process_ric_indication(int message_type, transaction_identifier id, const void *message_payload, size_t message_len) {
+std::string process_ric_indication(int message_type, transaction_identifier id, const void *message_payload, size_t message_len) {
 
 	std::cout << "In Process RIC indication" << std::endl;
 	std::cout << "ID " << id << std::endl;
@@ -297,25 +312,22 @@ void process_ric_indication(int message_type, transaction_identifier id, const v
     asn_fprint(stream, &asn_DEF_E2AP_PDU, pdu);
     mdclog_write(MDCLOG_DEBUG, "Decoded E2AP PDU: %s", printBuffer);
 
-    uint8_t res = procRicIndication(pdu, id);
+    return procRicIndication(pdu, id);
   }
 	else {
 		std::cout << "process_ric_indication, retval.code " << retval.code << std::endl;
+		return std::string();
 	}
 }
 
 /**
  * Handle RIC indication
- * TODO doxy
+ * Returns decoded JSON string if successful, empty string otherwise
  */
-uint8_t procRicIndication(E2AP_PDU_t *e2apMsg, transaction_identifier gnb_id)
+std::string procRicIndication(E2AP_PDU_t *e2apMsg, transaction_identifier gnb_id)
 {
    uint8_t idx;
-   uint8_t ied;
-   uint8_t ret = RC_OK;
-   uint32_t recvBufLen;
    RICindication_t *ricIndication;
-   RICaction_ToBeSetup_ItemIEs_t *actionItem;
 
    printf("\nE2AP : RIC Indication received");
    ricIndication = &e2apMsg->choice.initiatingMessage->value.choice.RICindication;
@@ -340,20 +352,307 @@ uint8_t procRicIndication(E2AP_PDU_t *e2apMsg, transaction_identifier gnb_id)
 					size_t payload_size = ricIndication->protocolIEs.list.array[idx]-> \
 																		 value.choice.RICindicationMessage.size;
 
-
 					char* payload = (char*) calloc(payload_size, sizeof(char));
 					memcpy(payload, ricIndication->protocolIEs.list.array[idx]-> \
 																		 value.choice.RICindicationMessage.buf, payload_size);
 
-					printf("Payload %s\n", payload);
+					// Helper lambda
+					auto json_escape = [](const unsigned char* data, size_t len) {
+						std::string s;
+						s.reserve(len + 8);
+						for (size_t i = 0; i < len; ++i) {
+							unsigned char c = data[i];
+							switch (c) {
+								case '\"': s += "\\\""; break;
+								case '\\': s += "\\\\"; break;
+								case '\b': s += "\\b"; break;
+								case '\f': s += "\\f"; break;
+								case '\n': s += "\\n"; break;
+								case '\r': s += "\\r"; break;
+								case '\t': s += "\\t"; break;
+								default:
+									if (c < 0x20) {
+										char buf[7];
+										snprintf(buf, sizeof(buf), "\\u%04x", c);
+										s += buf;
+									} else {
+										s.push_back((char)c);
+									}
+							}
+						}
+						return s;
+					};
 
-					// send payload to agent
-					std::string agent_ip = find_agent_ip_from_gnb(gnb_id);
-					send_socket(payload, payload_size, agent_ip);
+					// Helper lambda to extract RSRP/RSRQ/SINR from MeasQuantityResults
+					auto extract_signal_quality = [](MeasQuantityResults_t* mq) -> std::string {
+						if (!mq) return "";
+						std::string sq = "{";
+						bool has_any = false;
+						
+						if (mq->rsrp) {
+							sq += "\"rsrp\":" + std::to_string(*mq->rsrp);
+							has_any = true;
+						}
+						if (mq->rsrq) {
+							if (has_any) sq += ",";
+							sq += "\"rsrq\":" + std::to_string(*mq->rsrq);
+							has_any = true;
+						}
+						if (mq->sinr) {
+							if (has_any) sq += ",";
+							sq += "\"sinr\":" + std::to_string(*mq->sinr);
+							has_any = true;
+						}
+						
+						sq += "}";
+						return has_any ? sq : "";
+					};
 
-					break;
+					// Helper lambda to extract measurement from PM_Info_Item
+					auto extract_measurement = [&json_escape, &extract_signal_quality](PM_Info_Item_t* pm_item) -> std::string {
+						if (!pm_item) return "";
+						std::string meas = "{";
+						
+						// Extract measurement type (name or ID)
+						if (pm_item->pmType.present == MeasurementType_PR_measName) {
+							if (pm_item->pmType.choice.measName.buf && pm_item->pmType.choice.measName.size > 0) {
+								std::string meas_name((char*)pm_item->pmType.choice.measName.buf, 
+								                     pm_item->pmType.choice.measName.size);
+								meas += "\"name\":\"" + json_escape((unsigned char*)meas_name.c_str(), meas_name.size()) + "\"";
+							}
+						} else if (pm_item->pmType.present == MeasurementType_PR_measID) {
+							meas += "\"id\":" + std::to_string(pm_item->pmType.choice.measID);
+						}
+						
+						// Extract measurement value
+						if (pm_item->pmVal.present == MeasurementValue_PR_valueInt) {
+							meas += ",\"value\":" + std::to_string(pm_item->pmVal.choice.valueInt);
+						} else if (pm_item->pmVal.present == MeasurementValue_PR_valueReal) {
+							char buf[64];
+							snprintf(buf, sizeof(buf), "%.6f", pm_item->pmVal.choice.valueReal);
+							meas += ",\"value\":" + std::string(buf);
+						} else if (pm_item->pmVal.present == MeasurementValue_PR_noValue) {
+							meas += ",\"value\":null";
+						} else if (pm_item->pmVal.present == MeasurementValue_PR_valueRRC) {
+							// Extract RRC measurements (RSRP, RSRQ, SINR) - critical for network optimization!
+							L3_RRC_Measurements_t* rrc = pm_item->pmVal.choice.valueRRC;
+							if (rrc) {
+								meas += ",\"rrcEvent\":";
+								if (rrc->rrcEvent == RRCEvent_b1) meas += "\"b1\"";
+								else if (rrc->rrcEvent == RRCEvent_a3) meas += "\"a3\"";
+								else if (rrc->rrcEvent == RRCEvent_a5) meas += "\"a5\"";
+								else if (rrc->rrcEvent == RRCEvent_periodic) meas += "\"periodic\"";
+								else {
+									char buf[32];
+									snprintf(buf, sizeof(buf), "\"%ld\"", rrc->rrcEvent);
+									meas += buf;
+								}
+								
+								// Extract serving cell measurements (RSRP/RSRQ/SINR)
+								if (rrc->servingCellMeasurements) {
+									if (rrc->servingCellMeasurements->present == ServingCellMeasurements_PR_nr_measResultServingMOList) {
+										MeasResultServMOList_t* serv_list = rrc->servingCellMeasurements->choice.nr_measResultServingMOList;
+										if (serv_list && serv_list->list.count > 0) {
+											meas += ",\"servingCells\":[";
+											for (size_t i = 0; i < serv_list->list.count; i++) {
+												MeasResultServMO_t* serv_mo = serv_list->list.array[i];
+												if (serv_mo) {
+													if (i > 0) meas += ",";
+													meas += "{\"servCellId\":" + std::to_string(serv_mo->servCellId);
+													if (serv_mo->measResultServingCell.measResult.cellResults.resultsSSB_Cell) {
+														std::string sq = extract_signal_quality(serv_mo->measResultServingCell.measResult.cellResults.resultsSSB_Cell);
+														if (!sq.empty()) meas += ",\"signalQuality\":" + sq;
+													}
+													meas += "}";
+												}
+											}
+											meas += "]";
+										}
+									} else if (rrc->servingCellMeasurements->present == ServingCellMeasurements_PR_eutra_measResultPCell) {
+										MeasResultPCell_t* pcell = rrc->servingCellMeasurements->choice.eutra_measResultPCell;
+										if (pcell) {
+											meas += ",\"servingCell\":{";
+											meas += "\"physCellId\":" + std::to_string(pcell->eutra_PhysCellId);
+											meas += ",\"rsrp\":" + std::to_string(pcell->rsrpResult);
+											meas += ",\"rsrq\":" + std::to_string(pcell->rsrqResult);
+											meas += "}";
+										}
+									}
+								}
+								
+								// Extract neighbor cell measurements (for handover optimization)
+								if (rrc->measResultNeighCells) {
+									if (rrc->measResultNeighCells->present == MeasResultNeighCells_PR_measResultListNR) {
+										MeasResultListNR_t* neigh_list = rrc->measResultNeighCells->choice.measResultListNR;
+										if (neigh_list && neigh_list->list.count > 0) {
+											meas += ",\"neighborCells\":[";
+											for (size_t i = 0; i < neigh_list->list.count && i < 8; i++) { // maxCellReport = 8
+												MeasResultNR_t* neigh = neigh_list->list.array[i];
+												if (neigh) {
+													if (i > 0) meas += ",";
+													meas += "{";
+													if (neigh->physCellId) meas += "\"physCellId\":" + std::to_string(*neigh->physCellId);
+													if (neigh->measResult.cellResults.resultsSSB_Cell) {
+														std::string sq = extract_signal_quality(neigh->measResult.cellResults.resultsSSB_Cell);
+														if (!sq.empty()) {
+															if (neigh->physCellId) meas += ",";
+															meas += "\"signalQuality\":" + sq;
+														}
+													}
+													meas += "}";
+												}
+											}
+											meas += "]";
+										}
+									}
+								}
+							}
+						}
+						
+						meas += "}";
+						return meas;
+					};
+
+					std::string out_json;
+					bool decoded_ok = false;
+
+					// 1) Try E2SM-KPM
+					E2SM_KPM_IndicationMessage_t *kpm = 0;
+					asn_dec_rval_t kpm_res = asn_decode(0,
+					                                    ATS_ALIGNED_BASIC_PER,
+					                                    &asn_DEF_E2SM_KPM_IndicationMessage,
+					                                    (void**)&kpm,
+					                                    payload,
+					                                    payload_size);
+					if (kpm && kpm_res.code == RC_OK) {
+						// Decode KPM Format1 and extract measurement data
+						if (kpm->present == E2SM_KPM_IndicationMessage_PR_indicationMessage_Format1) {
+							E2SM_KPM_IndicationMessage_Format1_t* f1 = kpm->choice.indicationMessage_Format1;
+							if (f1) {
+								// Start building JSON with basic info
+								std::string json = "{\"serviceModel\":\"KPM\",\"format\":\"F1\"";
+								
+								// Add cellObjectID if present
+								// If not present, try to extract from MEID (e.g., "gnb:131-133-31000000" -> "1113")
+								if (f1->cellObjectID.buf && f1->cellObjectID.size > 0) {
+									std::string cell_id((char*)f1->cellObjectID.buf, f1->cellObjectID.size);
+									// Only add if it's a valid cell ID (not "NRCellCU" or empty)
+									if (cell_id != "NRCellCU" && !cell_id.empty()) {
+										json += ",\"cellObjectID\":\"" + json_escape((unsigned char*)cell_id.c_str(), cell_id.size()) + "\"";
+									}
+								}
+								
+								// Extract PM measurements from list_of_PM_Information (cell-level)
+								if (f1->list_of_PM_Information && f1->list_of_PM_Information->list.count > 0) {
+									json += ",\"measurements\":[";
+									for (size_t i = 0; i < f1->list_of_PM_Information->list.count; i++) {
+										PM_Info_Item_t* pm_item = f1->list_of_PM_Information->list.array[i];
+										if (pm_item) {
+											if (i > 0) json += ",";
+											json += extract_measurement(pm_item);
+										}
+									}
+									json += "]";
+								}
+								
+								// Extract per-UE measurements from list_of_matched_UEs
+								if (f1->list_of_matched_UEs && f1->list_of_matched_UEs->list.count > 0) {
+									json += ",\"ues\":[";
+									for (size_t i = 0; i < f1->list_of_matched_UEs->list.count; i++) {
+										PerUE_PM_Item_t* ue_item = f1->list_of_matched_UEs->list.array[i];
+										if (ue_item) {
+											if (i > 0) json += ",";
+											json += "{";
+											
+											// Extract UE ID
+											if (ue_item->ueId.buf && ue_item->ueId.size > 0) {
+												std::string ue_id_hex;
+												ue_id_hex.reserve(ue_item->ueId.size * 2);
+												static const char* hex_chars = "0123456789abcdef";
+												for (size_t j = 0; j < ue_item->ueId.size; j++) {
+													unsigned char c = ue_item->ueId.buf[j];
+													ue_id_hex += hex_chars[(c >> 4) & 0xF];
+													ue_id_hex += hex_chars[c & 0xF];
+												}
+												json += "\"ueId\":\"" + ue_id_hex + "\"";
+											}
+											
+											// Extract per-UE measurements
+											if (ue_item->list_of_PM_Information && ue_item->list_of_PM_Information->list.count > 0) {
+												json += ",\"measurements\":[";
+												for (size_t j = 0; j < ue_item->list_of_PM_Information->list.count; j++) {
+													PM_Info_Item_t* pm_item = ue_item->list_of_PM_Information->list.array[j];
+													if (pm_item) {
+														if (j > 0) json += ",";
+														json += extract_measurement(pm_item);
+													}
+												}
+												json += "]";
+											}
+											
+											json += "}";
+										}
+									}
+									json += "]";
+								}
+								
+								// Add PM containers count
+								size_t pm_cont_count = f1->pm_Containers.list.count;
+								json += ",\"pmContainers\":" + std::to_string(pm_cont_count);
+								
+								json += "}";
+								out_json = json;
+								decoded_ok = true;
+								size_t meas_count = f1->list_of_PM_Information ? f1->list_of_PM_Information->list.count : 0;
+								size_t ue_count = f1->list_of_matched_UEs ? f1->list_of_matched_UEs->list.count : 0;
+								mdclog_write(MDCLOG_INFO, "Decoded KPM E2SM message Format1 (pmContainers=%zu, measurements=%zu, ues=%zu)", 
+								             pm_cont_count, meas_count, ue_count);
+							}
+						} else {
+							out_json = "{\"serviceModel\":\"KPM\",\"format\":\"unknown\"}";
+							decoded_ok = true;
+							mdclog_write(MDCLOG_INFO, "Decoded KPM E2SM message (present=%d, unsupported format)", kpm->present);
+						}
+					}
+
+					// 2) If KPM not decoded, try HelloWorld
+					if (!decoded_ok) {
+						E2SM_HelloWorld_IndicationMessage_t *hw_msg = 0;
+						asn_dec_rval_t dres = asn_decode(0,
+						                                 ATS_ALIGNED_BASIC_PER,
+						                                 &asn_DEF_E2SM_HelloWorld_IndicationMessage,
+						                                 (void**)&hw_msg,
+						                                 payload,
+						                                 payload_size);
+						if (dres.code == RC_OK && hw_msg != nullptr) {
+							e2sm_indication helper_iface;
+							e2sm_indication_helper decoded;
+							if (helper_iface.get_fields(hw_msg, decoded)) {
+								std::string msg_str = json_escape(decoded.message, decoded.message_len);
+								out_json = std::string("{\"serviceModel\":\"HelloWorld\",\"indicationMessage\":\"") +
+								           msg_str + "\"}";
+								decoded_ok = true;
+								mdclog_write(MDCLOG_INFO, "Decoded HelloWorld E2SM message, len=%zu", decoded.message_len);
+							} else {
+								mdclog_write(MDCLOG_WARN, "HelloWorld decode get_fields failed");
+							}
+						} else {
+							mdclog_write(MDCLOG_WARN, "E2SM HelloWorld decode failed (code=%d)", dres.code);
+						}
+						if (hw_msg) {
+							ASN_STRUCT_FREE(asn_DEF_E2SM_HelloWorld_IndicationMessage, hw_msg);
+						}
+					}
+
+					if (kpm) {
+						ASN_STRUCT_FREE(asn_DEF_E2SM_KPM_IndicationMessage, kpm);
+					}
+					free(payload);
+
+					// Return decoded JSON if available, empty string otherwise
+					return decoded_ok ? out_json : std::string();
 				}
       }
    }
-   return ret; // TODO update ret value in case of errors
+   return std::string(); // No E2SM payload found or decoded
 }
