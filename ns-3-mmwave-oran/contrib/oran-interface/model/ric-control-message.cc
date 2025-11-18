@@ -320,7 +320,8 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
             
             // Set bandwidth
             enbDev->SetBandwidth(bandwidth);
-            fprintf(stderr, "[RicControlMessage] set-bandwidth: node %u bandwidth set to %u\n", foundNodeId, bandwidth);
+            uint8_t bandwidth2 = enbDev->GetBandwidth();
+            fprintf(stderr, "[RicControlMessage] set-bandwidth: node %u bandwidth set to %u (confirmed %u)\n", foundNodeId, bandwidth, bandwidth2);
         });
         return;
     }

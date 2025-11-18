@@ -182,9 +182,17 @@ MmWaveFlexTtiMacSchedSapProvider::SchedUlMacCtrlInfoReq(
     m_scheduler->DoSchedUlMacCtrlInfoReq(params);
 }
 
+// void
+// MmWaveFlexTtiMacSchedSapProvider::SchedSetMcs(int mcs)
+// {
+//     m_scheduler->DoSchedSetMcs(mcs);
+// }
+
 void
 MmWaveFlexTtiMacSchedSapProvider::SchedSetMcs(int mcs)
 {
+    NS_LOG_UNCOND("SchedSetMcs called with mcs=" << mcs);
+    fprintf(stderr, "[MmWaveFlexTtiMacSchedSapProvider] SchedSetMcs called with mcs=%d\n", mcs);
     m_scheduler->DoSchedSetMcs(mcs);
 }
 
@@ -1738,12 +1746,47 @@ MmWaveFlexTtiMacScheduler::DoSchedUlMacCtrlInfoReq(
 void
 MmWaveFlexTtiMacScheduler::DoSchedSetMcs(int mcs)
 {
+    // Example: mcs in [0..28] => enable fixed MCS, mcs < 0 => disable
+    NS_LOG_UNCOND("DoSchedSetMcs called with mcs=" << mcs);
+    fprintf(stderr, "[MmWaveFlexTtiMacScheduler] DoSchedSetMcs called with mcs=%d\n", mcs);
+    
     if (mcs >= 0 && mcs <= 28)
     {
-        m_mcsDefaultDl = mcs;
-        m_mcsDefaultUl = mcs;
+        m_mcsDefaultDl = static_cast<uint8_t>(mcs);
+        m_mcsDefaultUl = static_cast<uint8_t>(mcs);
+        m_fixedMcsDl   = true;
+        m_fixedMcsUl   = true;
+        NS_LOG_INFO("FlexTti: fixed MCS set to " << mcs << " (DL & UL)");
+        fprintf(stderr, "[MmWaveFlexTtiMacScheduler] Fixed MCS set to %d (DL & UL)\n", mcs);
+    }
+    else
+    {
+        m_fixedMcsDl = false;
+        m_fixedMcsUl = false;
+        NS_LOG_INFO("FlexTti: fixed MCS disabled, back to AMC");
+        fprintf(stderr, "[MmWaveFlexTtiMacScheduler] Fixed MCS disabled, back to AMC\n");
     }
 }
+
+// void
+// MmWaveFlexTtiMacScheduler::DoSchedSetMcs(int mcs)
+// {
+//     // Example: mcs in [0..28] => enable fixed MCS, mcs < 0 => disable
+//     if (mcs >= 0 && mcs <= 28)
+//     {
+//         m_mcsDefaultDl = static_cast<uint8_t>(mcs);
+//         m_mcsDefaultUl = static_cast<uint8_t>(mcs);
+//         m_fixedMcsDl   = true;
+//         m_fixedMcsUl   = true;
+//         NS_LOG_INFO("FlexTti: fixed MCS set to " << mcs << " (DL & UL)");
+//     }
+//     else
+//     {
+//         m_fixedMcsDl = false;
+//         m_fixedMcsUl = false;
+//         NS_LOG_INFO("FlexTti: fixed MCS disabled, back to AMC");
+//     }
+// }
 
 bool
 MmWaveFlexTtiMacScheduler::SortRlcBufferReq(

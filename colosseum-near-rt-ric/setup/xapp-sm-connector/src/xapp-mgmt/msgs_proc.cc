@@ -205,7 +205,9 @@ static inline std::string RequestRecommendation(const std::string& meid,
             }).detach();
         }
     }
-	return "{\"cmd\":\"set-bandwidth\",\"node\":0,\"bandwidth\":0}";
+	// return "{\"cmd\":\"set-bandwidth\",\"node\":0,\"bandwidth\":0}";
+	return "{\"cmd\":\"set-mcs\",\"node\":2,\"mcs\":0}";
+
     
     // // Original AI recommendation logic
     // std::string cmd;
