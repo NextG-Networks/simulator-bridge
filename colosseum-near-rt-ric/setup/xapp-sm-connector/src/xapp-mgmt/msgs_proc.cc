@@ -214,7 +214,7 @@ static inline std::string RequestRecommendation(const std::string& meid,
     // if (GetAiTcpClient().GetRecommendation(meid, kpi_json, cmd)) {
     //     return cmd;
     // }
-    return "";
+    // return "";
 }
 
 

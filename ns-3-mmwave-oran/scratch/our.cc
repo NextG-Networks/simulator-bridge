@@ -16,6 +16,9 @@
 #include "ns3/packet-sink.h"
 #include "ns3/netanim-module.h"
 
+#include "ns3/mmwave-component-carrier-enb.h"  // Add this
+#include "ns3/mmwave-flex-tti-mac-scheduler.h" // Add this
+
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -102,6 +105,9 @@ static void SampleAll(const NodeContainer &ueNodes,
     f << ",throughput_ue0_mbps"
       << ",throughput_ue0_ewma"
       << ",ping_ms"
+      << ",mcs_dl"           // Add MCS column
+      << ",mcs_ul"           // Add UL MCS column
+      << ",fixed_mcs_dl"     // Add fixed MCS flag
       << "\n";
     headerDone = true;
   }
@@ -140,11 +146,42 @@ static void SampleAll(const NodeContainer &ueNodes,
   const double alpha = 1.0 - std::exp(-(periodSec / tau));
   gS.ewma = alpha * mbps + (1.0 - alpha) * gS.ewma;
 
+  //
   double pingMs = gS.seenPing ? gS.lastPingMs : 0.0;
+  // Get MCS values from scheduler
+  // Get MCS values from scheduler
+  uint8_t mcsDl = 255;  // 255 = adaptive/not fixed
+  uint8_t mcsUl = 255;
+  bool fixedMcsDl = false;
+  
+  Ptr<mmwave::MmWaveEnbNetDevice> enbDev = gnbNode->GetDevice(0)->GetObject<mmwave::MmWaveEnbNetDevice>();
+  if (enbDev) {
+    // Access scheduler through component carrier
+    std::map<uint8_t, Ptr<mmwave::MmWaveComponentCarrier>> ccMap = enbDev->GetCcMap();
+    if (!ccMap.empty()) {
+      Ptr<mmwave::MmWaveComponentCarrierEnb> cc = 
+          DynamicCast<mmwave::MmWaveComponentCarrierEnb>(ccMap.at(0));
+      if (cc) {
+        Ptr<mmwave::MmWaveMacScheduler> sched = cc->GetMacScheduler();
+        if (sched) {
+          Ptr<mmwave::MmWaveFlexTtiMacScheduler> flexSched = 
+              DynamicCast<mmwave::MmWaveFlexTtiMacScheduler>(sched);
+          if (flexSched) {
+            mcsDl = flexSched->GetCurrentMcsDl();
+            mcsUl = flexSched->GetCurrentMcsUl();
+            fixedMcsDl = flexSched->IsFixedMcsDl();
+          }
+        }
+      }
+    }
+  }
 
   f << "," << mbps
     << "," << gS.ewma
     << "," << pingMs
+    << "," << static_cast<int>(mcsDl)    // Add MCS DL value
+    << "," << static_cast<int>(mcsUl)    // Add MCS UL value
+    << "," << (fixedMcsDl ? 1 : 0)       // Add fixed MCS flag
     << "\n";
   f.flush();
 

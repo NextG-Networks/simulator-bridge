@@ -64,6 +64,12 @@ class MmWaveFlexTtiMacScheduler : public MmWaveMacScheduler
     virtual void DoDispose(void) override;
     static TypeId GetTypeId(void);
 
+    // Getter methods for MCS values
+    uint8_t GetCurrentMcsDl() const;
+    uint8_t GetCurrentMcsUl() const;
+    bool IsFixedMcsDl() const;
+    bool IsFixedMcsUl() const;
+
     virtual void SetMacSchedSapUser(MmWaveMacSchedSapUser* sap) override;
     virtual void SetMacCschedSapUser(MmWaveMacCschedSapUser* s) override;
 
@@ -83,6 +89,8 @@ class MmWaveFlexTtiMacScheduler : public MmWaveMacScheduler
 
     friend class MmWaveFlexTtiMacSchedSapProvider;
     friend class MmWaveFlexTtiMacCschedSapProvider;
+
+
 
   private:
     struct UeSchedInfo
@@ -209,6 +217,8 @@ class MmWaveFlexTtiMacScheduler : public MmWaveMacScheduler
         unsigned int islot);
 
     void DoSchedSetMcs(int mcs);
+
+
 
     /**
      * \brief Refresh HARQ processes according to the timers
