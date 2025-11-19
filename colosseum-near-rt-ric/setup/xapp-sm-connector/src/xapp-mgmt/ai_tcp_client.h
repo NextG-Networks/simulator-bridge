@@ -38,11 +38,6 @@ public:
                            const std::string& kpi_json,
                            std::string& out_cmd_json);
     
-    // Listen for unsolicited config messages from AI (non-blocking, runs in background)
-    // When AI sends a config, calls handler(config_json)
-    void StartConfigListener(std::function<bool(const std::string&)> handler);
-    void StopConfigListener();
-    
     // Listen for reactive control commands from AI (non-blocking, runs in background)
     // When AI sends a control command, calls handler(meid, cmd_json)
     // Expected message format: {"type":"control","meid":"...","cmd":{...}}
@@ -62,14 +57,12 @@ private:
     int         sock_;
     std::mutex mtx_;
     
-    // Config listener (for bidirectional communication)
-    std::function<bool(const std::string&)> config_handler_;
+    // Listener thread for receiving messages from AI
     std::atomic<bool> listener_running_;
     std::unique_ptr<std::thread> listener_thread_;
-    void configListenerLoop();
+    void configListenerLoop();  // Named for historical reasons, now only handles control commands
     
     // Control command listener (for reactive control commands)
-    // Uses the same listener loop as config listener (configListenerLoop)
     std::function<bool(const std::string&, const std::string&)> control_cmd_handler_;
     std::atomic<bool> control_listener_running_;
 };

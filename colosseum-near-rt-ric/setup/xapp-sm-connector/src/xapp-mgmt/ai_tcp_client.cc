@@ -31,7 +31,6 @@ AiTcpClient::AiTcpClient(const std::string& host, int port)
 }
 
 AiTcpClient::~AiTcpClient() {
-    StopConfigListener();
     StopControlCommandListener();
     if (sock_ >= 0) {
         close(sock_);
@@ -245,58 +244,41 @@ void AiTcpClient::reset() {
     }
 }
 
-void AiTcpClient::StartConfigListener(std::function<bool(const std::string&)> handler) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    
-    if (listener_running_) {
-        mdclog_write(MDCLOG_WARN, "[AI-TCP] Config listener already running");
-        return;
-    }
-    
-    config_handler_ = std::move(handler);
-    listener_running_ = true;
-    listener_thread_ = std::unique_ptr<std::thread>(new std::thread(&AiTcpClient::configListenerLoop, this));
-    
-    mdclog_write(MDCLOG_INFO, "[AI-TCP] Started config listener thread");
-}
-
-void AiTcpClient::StopConfigListener() {
-    if (!listener_running_) {
-        return;
-    }
-    
-    listener_running_ = false;
-    
-    // Wake up the listener by closing socket if connected
-    {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (sock_ >= 0) {
-            shutdown(sock_, SHUT_RDWR);
-        }
-    }
-    
-    if (listener_thread_ && listener_thread_->joinable()) {
-        listener_thread_->join();
-    }
-    
-    mdclog_write(MDCLOG_INFO, "[AI-TCP] Stopped config listener");
-}
+// Config listener methods removed - config file writing is no longer supported.
+// All control should go through the direct RIC control path via StartControlCommandListener().
 
 void AiTcpClient::StartControlCommandListener(std::function<bool(const std::string&, const std::string&)> handler) {
-    std::lock_guard<std::mutex> lock(mtx_);
+    bool need_connect = false;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        control_cmd_handler_ = std::move(handler);
+        control_listener_running_ = true;
+        mdclog_write(MDCLOG_INFO, "[AI-TCP] Control command handler installed");
+        
+        // Check if we need to connect (check inside lock for thread safety)
+        need_connect = (sock_ < 0);
+    }
     
-    control_cmd_handler_ = std::move(handler);
-    control_listener_running_ = true;
-    mdclog_write(MDCLOG_INFO, "[AI-TCP] Control command handler installed");
+    // Try to establish connection proactively so listener can receive commands
+    // even before KPIs are sent (call outside of lock since ensureConnected locks)
+    if (need_connect) {
+        mdclog_write(MDCLOG_INFO, "[AI-TCP] Attempting to connect to AI server at %s:%d for control commands...", 
+                     host_.c_str(), port_);
+        ensureConnected();
+        // Note: ensureConnected will log success/failure
+    }
     
     // If the main listener isn't running yet, start it
-    // (it will handle both configs and control commands)
-    if (!listener_running_) {
-        listener_running_ = true;
-        listener_thread_ = std::unique_ptr<std::thread>(new std::thread(&AiTcpClient::configListenerLoop, this));
-        mdclog_write(MDCLOG_INFO, "[AI-TCP] Started listener thread for control commands");
-    } else {
-        mdclog_write(MDCLOG_INFO, "[AI-TCP] Listener thread already running, handler installed");
+    // (it will handle control commands)
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if (!listener_running_) {
+            listener_running_ = true;
+            listener_thread_ = std::unique_ptr<std::thread>(new std::thread(&AiTcpClient::configListenerLoop, this));
+            mdclog_write(MDCLOG_INFO, "[AI-TCP] Started listener thread for control commands");
+        } else {
+            mdclog_write(MDCLOG_INFO, "[AI-TCP] Listener thread already running, handler installed");
+        }
     }
 }
 
@@ -310,9 +292,8 @@ void AiTcpClient::StopControlCommandListener() {
     control_listener_running_ = false;
     control_cmd_handler_ = nullptr;
     
-    // Note: We don't stop the listener thread here because it might still be needed
-    // for config messages. The listener will continue running if config_handler_ is set.
-    // If both are stopped, the listener will be stopped by StopConfigListener().
+    // Note: We don't stop the listener thread here because it might be needed for other purposes.
+    // The listener will continue running if listener_running_ is still true.
     
     mdclog_write(MDCLOG_INFO, "[AI-TCP] Control command handler removed (listener thread continues running)");
 }
@@ -330,8 +311,23 @@ void AiTcpClient::configListenerLoop() {
         // Sleep outside of lock if not connected
         if (current_sock < 0) {
             consecutive_no_connection++;
-            // Log every 50 iterations (5 seconds) that we're waiting
-            if (consecutive_no_connection % 50 == 0) {
+            // Try to connect every 10 seconds (100 iterations * 100ms)
+            if (consecutive_no_connection % 100 == 0) {
+                // Try to establish connection
+                {
+                    std::lock_guard<std::mutex> lock(mtx_);
+                    if (sock_ < 0) {
+                        mdclog_write(MDCLOG_INFO, "[AI-TCP] Attempting to connect to AI server at %s:%d...", 
+                                     host_.c_str(), port_);
+                        // Unlock before calling ensureConnected (it will lock again)
+                    }
+                }
+                // Call ensureConnected without holding the lock
+                ensureConnected();
+            }
+            // Log every 50 iterations (5 seconds) that we're waiting (but only at DEBUG level)
+            if (consecutive_no_connection % 50 == 0 && consecutive_no_connection <= 200) {
+                // Only log first few times to avoid spam
                 mdclog_write(MDCLOG_DEBUG, "[AI-TCP] Listener waiting for socket connection (waited %d seconds)...", 
                             consecutive_no_connection / 10);
             }
@@ -441,17 +437,16 @@ void AiTcpClient::configListenerLoop() {
                             continue;
                         }
                         
-                        // Check if it's a config message (not a recommendation response)
+                        // Config messages (qos, handover, energy, etc.) are received but not written to CSV files.
+                        // The xApp can still receive these JSONs from the AI, but they are logged and ignored.
+                        // All control should go through the direct RIC control path with "type":"control".
                         if (config_json.find("\"type\":\"config\"") != std::string::npos ||
                             config_json.find("\"type\":\"qos\"") != std::string::npos ||
                             config_json.find("\"type\":\"handover\"") != std::string::npos ||
                             config_json.find("\"type\":\"energy\"") != std::string::npos) {
-                            // This is a config, not a recommendation response
-                            if (config_handler_) {
-                                mdclog_write(MDCLOG_INFO, "[AI-TCP] Received config: %s", config_json.c_str());
-                                config_handler_(config_json);
-                            }
-                            continue; // Don't treat as recommendation response
+                            mdclog_write(MDCLOG_INFO, "[AI-TCP] Received config message (CSV file writing disabled). Use direct RIC control with \"type\":\"control\" instead: %s", 
+                                        config_json.substr(0, 200).c_str());
+                            continue;
                         }
                         // Otherwise it might be a recommendation response, but we can't handle it here
                         // since GetRecommendation expects it. This is a limitation of the current design.
