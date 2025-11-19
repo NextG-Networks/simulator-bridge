@@ -815,6 +815,17 @@ MmWaveEnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
             m_drbThrDlPdcpBasedComputationUeid[imsi] = pdcpThroughputRx;
         }
 
+        // Calculate BLER from RLC stats: BLER = 1.0 - (rxPackets / txPackets)
+        double dlBler = 0.0;
+        uint64_t rxE2DlPduRlc = m_e2RlcStatsCalculator->GetDlRxPackets(imsi, 3);
+        if (txPdcpPduNrRlc > 0)
+        {
+            dlBler = 1.0 - (static_cast<double>(rxE2DlPduRlc) / static_cast<double>(txPdcpPduNrRlc));
+            dlBler = std::max(0.0, std::min(1.0, dlBler)); // Clamp between 0 and 1
+        }
+        NS_LOG_INFO("ue id " << std::to_string(imsi) << " txPdcpPduNrRlc " << std::to_string(txPdcpPduNrRlc));
+        NS_LOG_INFO("ue id " << std::to_string(imsi) << " rxE2DlPduRlc " << std::to_string(rxE2DlPduRlc) << " BLER " << dlBler);
+
         // compute bitrate based on RLC statistics, decoupled from pdcp throughput
         double rlcLatencyS = m_e2RlcStatsCalculator->GetDlDelay(imsi, 3);
         double rlcLatency = rlcLatencyS / 1e9; // unit: s
@@ -834,15 +845,20 @@ MmWaveEnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
                      << " txDlPacketsNr " << txPdcpPduNrRlc << " txBytes " << txBytes << " rxBytes "
                      << rxBytes << " txDlBytesNr " << txPdcpPduBytesNrRlc << " pdcpLatency "
                      << pdcpLatency << " pdcpThroughput " << pdcpThroughput << " rlcBitrate "
-                     << rlcBitrate);
+                     << rlcBitrate << " dlBler " << dlBler);
 
         m_e2PdcpStatsCalculator->ResetResultsForImsiLcid(imsi, 3);
 
         if (!indicationMessageHelper->IsOffline())
         {
+            // Add more measurements: txBytes (PDCP bytes), txDlPackets (PDCP PDU count), 
+            // pdcpThroughput, pdcpLatency, and dlBler
             indicationMessageHelper->AddCuUpUePmItem(ueImsiComplete,
-                                                     txPdcpPduBytesNrRlc,
-                                                     txPdcpPduNrRlc);
+                                                     txBytes,
+                                                     txDlPackets,
+                                                     pdcpThroughput,
+                                                     pdcpLatency,
+                                                     dlBler);
         }
 
         // TODO enable this back once the reports are fixed
@@ -853,9 +869,27 @@ MmWaveEnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
                                          ",,,,,,,,,"));
     }
 
+    // get average cell latency
+    double cellAverageLatency = 0;
+    if (!ueMap.empty())
+    {
+        cellAverageLatency = perUserAverageLatencySum / ueMap.size();
+    }
+
+    NS_LOG_DEBUG(Simulator::Now().GetSeconds()
+                 << " " << m_cellId << " cell, connected UEs number "
+                 << ueMap.size() << " cellAverageLatency " << cellAverageLatency);
+
     if (!indicationMessageHelper->IsOffline())
     {
-        indicationMessageHelper->FillCuUpValues(plmId);
+        indicationMessageHelper->AddCuUpCellPmItem(cellAverageLatency);
+    }
+
+    // PDCP volume for the whole cell
+    if (!indicationMessageHelper->IsOffline())
+    {
+        // pDCPBytesUL = 0 since it is not supported from the simulator
+        indicationMessageHelper->FillCuUpValues(plmId, 0, cellDlTxVolume);
     }
 
     NS_LOG_DEBUG(Simulator::Now().GetSeconds()

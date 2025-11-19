@@ -87,9 +87,13 @@ MEASUREMENT_LABELS = {
     "DRB.PdcpSduDelayDl": "UE_PDCP_Delay_DL_ms",  # Alternative format
     "DRB.PdcpSduDelayUl": "UE_PDCP_Delay_UL_ms",  # Alternative format
     "DRB.PdcpSduVolumeDl.UEID": "UE_PDCP_Bytes_DL",
+    "DRB.PdcpSduVolumeDl_Filter.UEID": "UE_PDCP_Bytes_DL",  # Filter variant (LTE/mmWave)
     "DRB.PdcpSduVolumeUl.UEID": "UE_PDCP_Bytes_UL",
     "DRB.PdcpPduNbrDl.UEID": "UE_PDCP_PDU_Count_DL",
+    "Tot.PdcpSduNbrDl.UEID": "UE_PDCP_PDU_Count_DL",  # Alternative name (LTE/mmWave)
     "DRB.PdcpPduNbrUl.UEID": "UE_PDCP_PDU_Count_UL",
+    "DRB.PdcpSduBitRateDl.UEID": "UE_PDCP_Throughput_DL_kbps",  # PDCP bit rate (kbps)
+    "DRB.PdcpSduBitRateUl.UEID": "UE_PDCP_Throughput_UL_kbps",
     "RRU.PrbUsedDl.UEID": "UE_PRB_Used_DL",
     "RRU.PrbUsedUl.UEID": "UE_PRB_Used_UL",
     

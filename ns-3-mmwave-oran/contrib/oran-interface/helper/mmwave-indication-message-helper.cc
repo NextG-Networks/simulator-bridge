@@ -33,25 +33,45 @@ MmWaveIndicationMessageHelper::MmWaveIndicationMessageHelper (IndicationMessageT
 }
 
 void
-MmWaveIndicationMessageHelper::AddCuUpUePmItem (std::string ueImsiComplete,
-                                                long txPdcpPduBytesNrRlc, long txPdcpPduNrRlc)
+MmWaveIndicationMessageHelper::AddCuUpUePmItem (std::string ueImsiComplete, long txBytes,
+                                                long txDlPackets, double pdcpThroughput,
+                                                double pdcpLatency, double dlBler)
 {
   Ptr<MeasurementItemList> ueVal = Create<MeasurementItemList> (ueImsiComplete);
+
   if (!m_reducedPmValues)
     {
-      // UE-specific PDCP PDU volume transmitted to NR gNB (Unit is Kbits)
-      ueVal->AddItem<long> ("QosFlow.PdcpPduVolumeDL_Filter.UEID", txPdcpPduBytesNrRlc);
+      // Keep only the most critical measurements to reduce message size and prevent E2 termination crashes
+      // UE-specific Downlink IP delay from mmWave gNB
+      ueVal->AddItem<double> ("DRB.PdcpSduDelayDl.UEID", pdcpLatency);
 
-      // UE-specific number of PDCP PDUs split with NR gNB
-      ueVal->AddItem<long> ("DRB.PdcpPduNbrDl.Qos.UEID", txPdcpPduNrRlc);
+      // UE-specific Downlink Block Error Rate (BLER) - percentage (0.0 to 100.0)
+      // Always include BLER (even if 0.0) for consistency
+      ueVal->AddItem<double> ("DRB.BlerDl.UEID", dlBler * 100.0);  // Convert to percentage
+      
+      // Optional: Add throughput if needed (commented out to reduce message size)
+      // ueVal->AddItem<double> ("DRB.PdcpSduBitRateDl.UEID", pdcpThroughput);
     }
 
   m_msgValues.m_ueIndications.insert (ueVal);
 }
 
 void
-MmWaveIndicationMessageHelper::FillCuUpValues (std::string plmId)
+MmWaveIndicationMessageHelper::AddCuUpCellPmItem (double cellAverageLatency)
 {
+  if (!m_reducedPmValues)
+    {
+      Ptr<MeasurementItemList> cellVal = Create<MeasurementItemList> ();
+      cellVal->AddItem<double> ("DRB.PdcpSduDelayDl", cellAverageLatency);
+      m_msgValues.m_cellMeasurementItems = cellVal;
+    }
+}
+
+void
+MmWaveIndicationMessageHelper::FillCuUpValues (std::string plmId, long pdcpBytesUl, long pdcpBytesDl)
+{
+  m_cuUpValues->m_pDCPBytesUL = pdcpBytesUl;
+  m_cuUpValues->m_pDCPBytesDL = pdcpBytesDl;
   FillBaseCuUpValues (plmId);
 }
 
@@ -80,33 +100,20 @@ MmWaveIndicationMessageHelper::AddDuUePmItem (
   Ptr<MeasurementItemList> ueVal = Create<MeasurementItemList> (ueImsiComplete);
   if (!m_reducedPmValues)
     {
-      ueVal->AddItem<long> ("TB.TotNbrDl.1.UEID", macPduUe);
-      ueVal->AddItem<long> ("TB.TotNbrDlInitial.UEID", macPduInitialUe);
+      // Keep only essential measurements to reduce message size
+      // TB counts and modulation schemes (already in CSV)
       ueVal->AddItem<long> ("TB.TotNbrDlInitial.Qpsk.UEID", macQpsk);
       ueVal->AddItem<long> ("TB.TotNbrDlInitial.16Qam.UEID", mac16Qam);
       ueVal->AddItem<long> ("TB.TotNbrDlInitial.64Qam.UEID", mac64Qam);
-      ueVal->AddItem<long> ("TB.ErrTotalNbrDl.1.UEID", macRetx);
-      ueVal->AddItem<long> ("QosFlow.PdcpPduVolumeDL_Filter.UEID", macVolume);
       ueVal->AddItem<long> ("RRU.PrbUsedDl.UEID", (long) std::ceil (macPrb));
-      ueVal->AddItem<long> ("CARR.PDSCHMCSDist.Bin1.UEID", macMac04);
-      ueVal->AddItem<long> ("CARR.PDSCHMCSDist.Bin2.UEID", macMac59);
-      ueVal->AddItem<long> ("CARR.PDSCHMCSDist.Bin3.UEID", macMac1014);
-      ueVal->AddItem<long> ("CARR.PDSCHMCSDist.Bin4.UEID", macMac1519);
-      ueVal->AddItem<long> ("CARR.PDSCHMCSDist.Bin5.UEID", macMac2024);
-      ueVal->AddItem<long> ("CARR.PDSCHMCSDist.Bin6.UEID", macMac2529);
-      ueVal->AddItem<long> ("L1M.RS-SINR.Bin34.UEID", macSinrBin1);
-      ueVal->AddItem<long> ("L1M.RS-SINR.Bin46.UEID", macSinrBin2);
-      ueVal->AddItem<long> ("L1M.RS-SINR.Bin58.UEID", macSinrBin3);
-      ueVal->AddItem<long> ("L1M.RS-SINR.Bin70.UEID", macSinrBin4);
-      ueVal->AddItem<long> ("L1M.RS-SINR.Bin82.UEID", macSinrBin5);
-      ueVal->AddItem<long> ("L1M.RS-SINR.Bin94.UEID", macSinrBin6);
-      ueVal->AddItem<long> ("L1M.RS-SINR.Bin127.UEID", macSinrBin7);
-      ueVal->AddItem<long> ("DRB.BufferSize.Qos.UEID", rlcBufferOccup);
+      
+      // Removed to reduce message size:
+      // - MCS distribution bins (6 bins) - too detailed
+      // - SINR bins (7 bins) - too detailed
+      // - Buffer size, error counts, volume - less critical
     }
 
-  // This value is not requested anymore, so it has been removed from the delivery, but it will be still logged;
-  // ueVal->AddItem<double> ("DRB.UEThpDlPdcpBased.UEID", drbThrDlPdcpBasedUeid);
-  
+  // Throughput is essential, keep it
   ueVal->AddItem<double> ("DRB.UEThpDl.UEID", drbThrDlUeid);
 
   m_msgValues.m_ueIndications.insert (ueVal);
@@ -127,35 +134,20 @@ MmWaveIndicationMessageHelper::AddDuCellPmItem (
 
   if (!m_reducedPmValues)
     {
-      cellVal->AddItem<long> ("TB.TotNbrDl.1", macPduCellSpecific);
-      cellVal->AddItem<long> ("TB.TotNbrDlInitial", macPduInitialCellSpecific);
+      // Keep only essential cell-level measurements to reduce message size
+      // Modulation scheme counts (already in CSV)
+      cellVal->AddItem<long> ("TB.TotNbrDlInitial.Qpsk", macQpskCellSpecific);
+      cellVal->AddItem<long> ("TB.TotNbrDlInitial.16Qam", mac16QamCellSpecific);
+      cellVal->AddItem<long> ("TB.TotNbrDlInitial.64Qam", mac64QamCellSpecific);
+      cellVal->AddItem<long> ("RRU.PrbUsedDl", (long) std::ceil (prbUtilizationDl));
+      
+      // Removed to reduce message size:
+      // - MCS distribution bins (6 bins) - too detailed
+      // - SINR bins (7 bins) - too detailed
+      // - Error counts, volume, buffer - less critical
     }
 
-  cellVal->AddItem<long> ("TB.TotNbrDlInitial.Qpsk", macQpskCellSpecific);
-  cellVal->AddItem<long> ("TB.TotNbrDlInitial.16Qam", mac16QamCellSpecific);
-  cellVal->AddItem<long> ("TB.TotNbrDlInitial.64Qam", mac64QamCellSpecific);
-  cellVal->AddItem<long> ("RRU.PrbUsedDl", (long) std::ceil (prbUtilizationDl));
-
-  if (!m_reducedPmValues)
-    {
-      cellVal->AddItem<long> ("TB.ErrTotalNbrDl.1", macRetxCellSpecific);
-      cellVal->AddItem<long> ("QosFlow.PdcpPduVolumeDL_Filter", macVolumeCellSpecific);
-      cellVal->AddItem<long> ("CARR.PDSCHMCSDist.Bin1", macMac04CellSpecific);
-      cellVal->AddItem<long> ("CARR.PDSCHMCSDist.Bin2", macMac59CellSpecific);
-      cellVal->AddItem<long> ("CARR.PDSCHMCSDist.Bin3", macMac1014CellSpecific);
-      cellVal->AddItem<long> ("CARR.PDSCHMCSDist.Bin4", macMac1519CellSpecific);
-      cellVal->AddItem<long> ("CARR.PDSCHMCSDist.Bin5", macMac2024CellSpecific);
-      cellVal->AddItem<long> ("CARR.PDSCHMCSDist.Bin6", macMac2529CellSpecific);
-      cellVal->AddItem<long> ("L1M.RS-SINR.Bin34", macSinrBin1CellSpecific);
-      cellVal->AddItem<long> ("L1M.RS-SINR.Bin46", macSinrBin2CellSpecific);
-      cellVal->AddItem<long> ("L1M.RS-SINR.Bin58", macSinrBin3CellSpecific);
-      cellVal->AddItem<long> ("L1M.RS-SINR.Bin70", macSinrBin4CellSpecific);
-      cellVal->AddItem<long> ("L1M.RS-SINR.Bin82", macSinrBin5CellSpecific);
-      cellVal->AddItem<long> ("L1M.RS-SINR.Bin94", macSinrBin6CellSpecific);
-      cellVal->AddItem<long> ("L1M.RS-SINR.Bin127", macSinrBin7CellSpecific);
-      cellVal->AddItem<long> ("DRB.BufferSize.Qos", rlcBufferOccupCellSpecific);
-    }
-
+  // Mean active UEs is essential, keep it
   cellVal->AddItem<long> ("DRB.MeanActiveUeDl",activeUeDl);
 
   m_msgValues.m_cellMeasurementItems = cellVal;
