@@ -5,12 +5,27 @@ import json
 import hashlib
 import csv
 import os
+import threading
+import time
 from datetime import datetime
 from collections import defaultdict
 
 HOST = "0.0.0.0"
 PORT = 5000
 MAX_FRAME = 1024 * 1024  # 1MB
+
+# Command interface port (for test scripts to send commands)
+CMD_INTERFACE_PORT = 5002
+
+# Reactive control command settings
+ENABLE_REACTIVE_CONTROL = True  # Set to True to enable reactive control commands
+CONTROL_TRIGGER_THRESHOLD = 5  # Number of KPI messages before sending a control command (for demo)
+CONTROL_DELAY_SEC = 2.0  # Delay before sending control command after receiving KPI (for demo)
+
+# Manual control command interface (for testing)
+# You can call send_manual_control_command() from another thread or script
+manual_control_queue = []  # Queue for manual control commands: [(meid, cmd_dict), ...]
+manual_control_lock = threading.Lock()
 
 # CSV output files
 CSV_GNB_FILE = "gnb_kpis.csv"
@@ -23,6 +38,11 @@ prev_values = defaultdict(dict)
 # Use a dict keyed by connection address to avoid cross-connection interference
 last_message_hashes = {}  # {addr: (hash, time)}
 DEDUP_WINDOW_MS = 100  # Skip duplicate messages within 100ms
+
+# Store active connections for sending reactive control commands
+active_connections = {}  # {addr: conn}
+connection_meids = {}  # {addr: meid} - track MEID for each connection
+connections_lock = threading.Lock()
 
 # Verbose mode - set to True to see all messages including filtered ones
 VERBOSE_MODE = True
@@ -575,23 +595,210 @@ def print_kpi_table(msg, conn_addr=None):
     
     return True  # Message was displayed
 
+def send_control_command(conn, meid, cmd_json):
+    """Send a reactive control command to the xApp"""
+    try:
+        # Check if connection is still valid
+        if conn is None:
+            print(f"[AI-DUMMY] ❌ Connection is None, cannot send command")
+            return False
+        
+        # Ensure cmd_json is a dict (not a string)
+        if isinstance(cmd_json, str):
+            try:
+                cmd_dict = json.loads(cmd_json)
+            except json.JSONDecodeError:
+                # If it's not valid JSON, treat it as a string command
+                cmd_dict = {"cmd": cmd_json}
+        else:
+            cmd_dict = cmd_json
+        
+        # Format: {"type":"control","meid":"...","cmd":{...}}
+        control_msg = {
+            "type": "control",
+            "meid": meid,
+            "cmd": cmd_dict
+        }
+        msg_json = json.dumps(control_msg)
+        msg_bytes = msg_json.encode("utf-8")
+        
+        # Send length-prefixed frame
+        print(f"[AI-DUMMY] Attempting to send control command on connection...")
+        print(f"[AI-DUMMY]    Message length: {len(msg_bytes)} bytes")
+        print(f"[AI-DUMMY]    Full message: {msg_json}")
+        
+        conn.sendall(struct.pack("!I", len(msg_bytes)) + msg_bytes)
+        print(f"[AI-DUMMY] ✅ Successfully sent reactive control command: meid={meid}")
+        print(f"[AI-DUMMY]    Command JSON: {json.dumps(cmd_dict, indent=2)}")
+        return True
+    except BrokenPipeError:
+        print(f"[AI-DUMMY] ❌ Connection broken - xApp may have disconnected")
+        return False
+    except OSError as e:
+        print(f"[AI-DUMMY] ❌ Socket error: {e}")
+        return False
+    except Exception as e:
+        print(f"[AI-DUMMY] ❌ Failed to send control command: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def generate_demo_control_command(meid, kpi_data):
+    """Generate a demo control command based on KPI data"""
+    # Example: Send a bandwidth change command after receiving KPIs
+    # This is just a demo - replace with your actual AI logic
+    
+    # Extract some metrics to make decisions
+    measurements = kpi_data.get("measurements", [])
+    
+    # Example logic: if throughput is low, increase bandwidth
+    # Or if PRB usage is high, adjust MCS
+    for meas in measurements:
+        name = meas.get("name", "")
+        value = meas.get("value", 0)
+        
+        # Example: If PRB usage is high (>80%), reduce MCS
+        if "PrbUsed" in name and value > 80:
+            return {
+                "cmd": "set-mcs",
+                "node": 0,
+                "mcs": 5  # Reduce MCS to 5
+            }
+        
+        # Example: If throughput is low, increase bandwidth
+        if "Thp" in name and value < 10:
+            return {
+                "cmd": "set-bandwidth",
+                "node": 0,
+                "bandwidth": 100  # Increase bandwidth
+            }
+    
+    # Default: no action
+    return None
+
+def get_active_connections():
+    """Get list of active connections and their MEIDs (for debugging)"""
+    with connections_lock:
+        return {
+            str(addr): connection_meids.get(addr, "unknown")
+            for addr in active_connections.keys()
+        }
+
+def send_manual_control_command(meid, cmd_dict):
+    """Manually trigger a control command (for testing/debugging)
+    
+    Args:
+        meid: MEID string (e.g., "gnb:131-133-31000000")
+        cmd_dict: Command dictionary (e.g., {"cmd": "set-mcs", "node": 0, "mcs": 5})
+    
+    Example:
+        send_manual_control_command("gnb:131-133-31000000", {"cmd": "set-bandwidth", "node": 0, "bandwidth": 100})
+    """
+    # Check if there are active connections
+    active = get_active_connections()
+    if not active:
+        print(f"[AI-DUMMY] ⚠️  WARNING: No active connections! Make sure the xApp is connected.")
+        print(f"[AI-DUMMY]    Waiting for xApp to connect and send at least one KPI message...")
+    
+    with manual_control_lock:
+        manual_control_queue.append((meid, cmd_dict))
+    print(f"[AI-DUMMY] Queued manual control command: meid={meid}, cmd={cmd_dict}")
+    if active:
+        print(f"[AI-DUMMY] Active connections: {active}")
+
+def process_manual_control_commands():
+    """Process queued manual control commands"""
+    while True:
+        time.sleep(0.5)  # Check every 500ms
+        with manual_control_lock:
+            if manual_control_queue:
+                meid, cmd = manual_control_queue.pop(0)
+                # Find connection for this MEID (or use first available)
+                with connections_lock:
+                    conn = None
+                    conn_addr = None
+                    
+                    # Try to find connection matching the MEID
+                    for addr, tracked_meid in connection_meids.items():
+                        if tracked_meid == meid and addr in active_connections:
+                            conn = active_connections[addr]
+                            conn_addr = addr
+                            print(f"[AI-DUMMY] Found connection for MEID {meid} at {addr}")
+                            break
+                    
+                    # If no match, use first available connection
+                    if not conn and active_connections:
+                        conn_addr = list(active_connections.keys())[0]
+                        conn = active_connections[conn_addr]
+                        print(f"[AI-DUMMY] No matching MEID, using first available connection at {conn_addr}")
+                    
+                    if conn:
+                        print(f"[AI-DUMMY] ========================================")
+                        print(f"[AI-DUMMY] Sending manual control command")
+                        print(f"[AI-DUMMY]   Connection: {conn_addr}")
+                        print(f"[AI-DUMMY]   MEID: {meid}")
+                        print(f"[AI-DUMMY]   Command: {cmd}")
+                        print(f"[AI-DUMMY] ========================================")
+                        success = send_control_command(conn, meid, cmd)
+                        if not success:
+                            print(f"[AI-DUMMY] ⚠️  Command send failed - connection may be closed")
+                            # Remove dead connection
+                            if conn_addr in active_connections:
+                                del active_connections[conn_addr]
+                            if conn_addr in connection_meids:
+                                del connection_meids[conn_addr]
+                    else:
+                        print(f"[AI-DUMMY] ❌ No active connections to send manual control command (MEID: {meid})")
+                        print(f"[AI-DUMMY] Active connections: {list(active_connections.keys())}")
+                        print(f"[AI-DUMMY] Tracked MEIDs: {connection_meids}")
+                        print(f"[AI-DUMMY] ⚠️  Make sure:")
+                        print(f"[AI-DUMMY]    1. The xApp is running and connected")
+                        print(f"[AI-DUMMY]    2. The xApp has sent at least one KPI message")
+                        print(f"[AI-DUMMY]    3. The connection is still active")
+
+def handle_reactive_control(meid, kpi_data, conn, addr):
+    """Handle reactive control command generation and sending"""
+    if not ENABLE_REACTIVE_CONTROL:
+        return
+    
+    # Generate control command based on KPI
+    cmd = generate_demo_control_command(meid, kpi_data)
+    
+    if cmd:
+        # Send control command after a short delay (to simulate AI processing)
+        def send_after_delay():
+            time.sleep(CONTROL_DELAY_SEC)
+            with connections_lock:
+                if addr in active_connections:
+                    send_control_command(active_connections[addr], meid, cmd)
+        
+        # Send in background thread to not block KPI processing
+        threading.Thread(target=send_after_delay, daemon=True).start()
+    else:
+        print(f"[AI-DUMMY] No control action needed for meid={meid}")
+
 def handle_conn(conn, addr):
     print(f"[AI-DUMMY] Connected from {addr}")
     msg_count = 0
+    
+    # Register this connection for reactive control commands
+    with connections_lock:
+        active_connections[addr] = conn
+    
     try:
         while True:
             hdr = recv_all(conn, 4)
             if hdr is None:
                 print(f"[AI-DUMMY] Client closed (received {msg_count} messages)")
-                return
+                break
             (length,) = struct.unpack("!I", hdr)
             if length == 0 or length > MAX_FRAME:
                 print(f"[AI-DUMMY] Invalid frame length={length}, closing")
-                return
+                break
             body = recv_all(conn, length)
             if body is None:
                 print("[AI-DUMMY] Incomplete frame body")
-                return
+                break
             text = body.decode("utf-8", errors="replace")
             msg_count += 1
             
@@ -603,6 +810,11 @@ def handle_conn(conn, addr):
                 print(f"[AI-DUMMY] Received message #{msg_count}: type={msg_type}, size={len(text)} bytes")
                 
                 if msg_type == "kpi":
+                    # Track MEID for this connection
+                    meid = msg.get("meid", "unknown")
+                    with connections_lock:
+                        connection_meids[addr] = meid
+                    
                     # Display KPI in table format
                     printed = print_kpi_table(msg, addr)
                     if not printed and not VERBOSE_MODE:
@@ -612,6 +824,14 @@ def handle_conn(conn, addr):
                         measurements = kpi.get("measurements", [])
                         ues = kpi.get("ues", [])
                         print(f"[AI-DUMMY] Message filtered: cellId={cell_id}, measurements={len(measurements)}, ues={len(ues)}")
+                    
+                    # Handle reactive control command generation
+                    if printed or ENABLE_REACTIVE_CONTROL:
+                        kpi_data = msg.get("kpi", {})
+                        # Only send control commands after receiving a few KPIs (for demo)
+                        if msg_count >= CONTROL_TRIGGER_THRESHOLD:
+                            handle_reactive_control(meid, kpi_data, conn, addr)
+                            
                 elif msg_type == "recommendation_request":
                     # Also display KPI if it's a recommendation request
                     if "kpi" in msg:
@@ -620,7 +840,7 @@ def handle_conn(conn, addr):
                             kpi = msg.get("kpi", {})
                             cell_id = kpi.get("cellObjectID", "N/A")
                             print(f"[AI-DUMMY] Recommendation request filtered: cellId={cell_id}")
-                    # Send reply
+                    # Send reply (for backward compatibility with polling mode)
                     reply = json.dumps({"no_action": True}).encode("utf-8")
                     conn.sendall(struct.pack("!I", len(reply)) + reply)
                 else:
@@ -637,22 +857,97 @@ def handle_conn(conn, addr):
                 traceback.print_exc()
                 print(f"[AI-DUMMY] Raw: {text[:500]}...")
     finally:
+        # Unregister connection
+        with connections_lock:
+            if addr in active_connections:
+                del active_connections[addr]
+            if addr in connection_meids:
+                del connection_meids[addr]
         conn.close()
         print(f"[AI-DUMMY] Connection closed (total messages: {msg_count})")
+
+def handle_command_interface(conn, addr):
+    """Handle commands from test scripts via TCP"""
+    try:
+        print(f"[AI-DUMMY] Command interface: Connected from {addr}")
+        data = conn.recv(4096)
+        if not data:
+            return
+        
+        try:
+            cmd_json = json.loads(data.decode("utf-8"))
+            meid = cmd_json.get("meid", "")
+            cmd = cmd_json.get("cmd", {})
+            
+            if not meid or not cmd:
+                response = {"status": "error", "message": "Missing 'meid' or 'cmd' field"}
+                conn.sendall(json.dumps(response).encode("utf-8"))
+                return
+            
+            # Queue the command
+            send_manual_control_command(meid, cmd)
+            response = {"status": "ok", "message": f"Command queued for MEID {meid}"}
+            conn.sendall(json.dumps(response).encode("utf-8"))
+            
+        except json.JSONDecodeError as e:
+            response = {"status": "error", "message": f"Invalid JSON: {e}"}
+            conn.sendall(json.dumps(response).encode("utf-8"))
+        except Exception as e:
+            response = {"status": "error", "message": str(e)}
+            conn.sendall(json.dumps(response).encode("utf-8"))
+            
+    except Exception as e:
+        print(f"[AI-DUMMY] Command interface error: {e}")
+    finally:
+        conn.close()
+
+def command_interface_server():
+    """Run TCP server for command interface on separate port"""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((HOST, CMD_INTERFACE_PORT))
+            s.listen(5)
+            print(f"[AI-DUMMY] Command interface listening on {HOST}:{CMD_INTERFACE_PORT}")
+            while True:
+                conn, addr = s.accept()
+                threading.Thread(target=handle_command_interface, args=(conn, addr), daemon=True).start()
+    except Exception as e:
+        print(f"[AI-DUMMY] Command interface server error: {e}")
 
 def main():
     # Initialize CSV files
     init_csv_files()
+    
+    print(f"[AI-DUMMY] Starting reactive AI dummy server...")
+    print(f"[AI-DUMMY] Reactive control: {'ENABLED' if ENABLE_REACTIVE_CONTROL else 'DISABLED'}")
+    if ENABLE_REACTIVE_CONTROL:
+        print(f"[AI-DUMMY] Control trigger: After {CONTROL_TRIGGER_THRESHOLD} KPI messages")
+        print(f"[AI-DUMMY] Control delay: {CONTROL_DELAY_SEC} seconds")
+    print(f"[AI-DUMMY] Listening on {HOST}:{PORT} for KPI messages")
+    print(f"[AI-DUMMY] Command interface on {HOST}:{CMD_INTERFACE_PORT} for test scripts")
+    print(f"[AI-DUMMY] Ready to receive KPIs and send reactive control commands!")
+    print(f"[AI-DUMMY]")
+    print(f"[AI-DUMMY] To manually trigger a control command, use test_reactive_control.py")
+    print(f"[AI-DUMMY]   or send JSON to port {CMD_INTERFACE_PORT}:")
+    print(f"[AI-DUMMY]   {{\"meid\":\"gnb:131-133-31000000\",\"cmd\":{{\"cmd\":\"set-mcs\",\"node\":0,\"mcs\":5}}}}")
+    print(f"[AI-DUMMY]")
+    
+    # Start background thread for processing manual control commands
+    threading.Thread(target=process_manual_control_commands, daemon=True).start()
+    
+    # Start command interface server in background thread
+    threading.Thread(target=command_interface_server, daemon=True).start()
     
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind((HOST, PORT))
             s.listen(5)
-            print(f"[AI-DUMMY] Listening on {HOST}:{PORT}")
             while True:
                 conn, addr = s.accept()
-                handle_conn(conn, addr)
+                # Handle each connection in a separate thread to support multiple xApps
+                threading.Thread(target=handle_conn, args=(conn, addr), daemon=True).start()
     except KeyboardInterrupt:
         print("\n[AI-DUMMY] Shutting down...")
     finally:

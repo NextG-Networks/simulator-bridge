@@ -34,7 +34,7 @@ NS_LOG_COMPONENT_DEFINE("MVS_Mmwave_1gNB_1UE");
 
 // ---------------- Runtime flags ----------------
 static GlobalValue g_simTime("simTime", "Simulation time (s)",
-  DoubleValue(10.0), MakeDoubleChecker<double>(1.0, 3600.0));
+  DoubleValue(100.0), MakeDoubleChecker<double>(1.0, 3600.0));
 static GlobalValue g_outDir("outDir", "Output directory",
   StringValue("out/logs"), MakeStringChecker());
 
@@ -549,9 +549,10 @@ Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::SymPerSlot",
 
 
 
-
+  NS_LOG_UNCOND("is this visible?");
   Simulator::Stop(Seconds(simTime));
   Simulator::Run();
+  NS_LOG_UNCOND("Simulation finished.");
   Simulator::Destroy();
   return 0;
 }
