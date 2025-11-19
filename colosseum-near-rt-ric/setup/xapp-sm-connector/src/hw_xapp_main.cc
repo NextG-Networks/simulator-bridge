@@ -24,6 +24,7 @@
 #include "xapp.hpp"
 #include "xapp-mgmt/ai_config_receiver.h"
 #include "xapp-mgmt/ns3_control_writer.h"
+#include "xapp-mgmt/ai_tcp_client.h"
 #include <thread>
 #include <cstdlib>
 
@@ -126,6 +127,14 @@ int main(int argc, char *argv[]){
 	
 	mdclog_write(MDCLOG_INFO, "[MAIN] Started AI config receiver on port %d, writing to %s", 
 	             config_port, ns3_control_dir.c_str());
+
+	// Setup reactive control command listener
+	GetAiTcpClient().StartControlCommandListener(
+		[handler = mp_handler.get()](const std::string& meid, const std::string& cmd_json) -> bool {
+			handler->send_control(cmd_json, meid);
+			return true;
+		}
+	);
 
 	// Now start the xApp (this will send subscriptions and start receiving KPIs)
 	hw_xapp->startup(std::ref(*sub_handler));

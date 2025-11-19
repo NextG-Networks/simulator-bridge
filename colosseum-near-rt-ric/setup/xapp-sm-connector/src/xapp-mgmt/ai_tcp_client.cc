@@ -13,6 +13,9 @@
 #include <atomic>
 #include <functional>
 #include <chrono>
+#include <rapidjson/document.h>
+#include <rapidjson/writer.h>
+#include <rapidjson/stringbuffer.h>
 
 extern "C" {
 #include "mdclog/mdclog.h"
@@ -22,12 +25,14 @@ AiTcpClient::AiTcpClient(const std::string& host, int port)
     : host_(host),
       port_(port),
       sock_(-1),
-      listener_running_(false)
+      listener_running_(false),
+      control_listener_running_(false)
 {
 }
 
 AiTcpClient::~AiTcpClient() {
     StopConfigListener();
+    StopControlCommandListener();
     if (sock_ >= 0) {
         close(sock_);
         sock_ = -1;
@@ -142,7 +147,17 @@ bool AiTcpClient::GetRecommendation(const std::string& meid,
 
 bool AiTcpClient::ensureConnected() {
     if (sock_ >= 0) {
-        return true;
+        // Verify socket is still valid by checking if it's still connected
+        // (simple check - try to get socket error)
+        int error = 0;
+        socklen_t len = sizeof(error);
+        if (getsockopt(sock_, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error == 0) {
+            return true;
+        } else {
+            // Socket is broken, reset it
+            mdclog_write(MDCLOG_WARN, "[AI-TCP] Socket appears broken, resetting connection");
+            reset();
+        }
     }
 
     int s = socket(AF_INET, SOCK_STREAM, 0);
@@ -169,8 +184,14 @@ bool AiTcpClient::ensureConnected() {
     }
 
     sock_ = s;
-    mdclog_write(MDCLOG_INFO, "[AI-TCP] Connected to AI at %s:%d",
-                 host_.c_str(), port_);
+    mdclog_write(MDCLOG_INFO, "[AI-TCP] Connected to AI at %s:%d (socket=%d)",
+                 host_.c_str(), port_, sock_);
+    
+    // Notify listener that socket is now available
+    if (listener_running_) {
+        mdclog_write(MDCLOG_INFO, "[AI-TCP] Socket connected - listener can now receive messages");
+    }
+    
     return true;
 }
 
@@ -217,9 +238,10 @@ bool AiTcpClient::recvAll(void* buf, size_t len) {
 
 void AiTcpClient::reset() {
     if (sock_ >= 0) {
-        mdclog_write(MDCLOG_INFO, "[AI-TCP] Closing AI connection");
+        mdclog_write(MDCLOG_INFO, "[AI-TCP] Closing AI connection (socket=%d)", sock_);
         close(sock_);
         sock_ = -1;
+        mdclog_write(MDCLOG_DEBUG, "[AI-TCP] Connection reset - listener will wait for reconnection");
     }
 }
 
@@ -260,31 +282,165 @@ void AiTcpClient::StopConfigListener() {
     mdclog_write(MDCLOG_INFO, "[AI-TCP] Stopped config listener");
 }
 
+void AiTcpClient::StartControlCommandListener(std::function<bool(const std::string&, const std::string&)> handler) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    
+    control_cmd_handler_ = std::move(handler);
+    control_listener_running_ = true;
+    mdclog_write(MDCLOG_INFO, "[AI-TCP] Control command handler installed");
+    
+    // If the main listener isn't running yet, start it
+    // (it will handle both configs and control commands)
+    if (!listener_running_) {
+        listener_running_ = true;
+        listener_thread_ = std::unique_ptr<std::thread>(new std::thread(&AiTcpClient::configListenerLoop, this));
+        mdclog_write(MDCLOG_INFO, "[AI-TCP] Started listener thread for control commands");
+    } else {
+        mdclog_write(MDCLOG_INFO, "[AI-TCP] Listener thread already running, handler installed");
+    }
+}
+
+void AiTcpClient::StopControlCommandListener() {
+    std::lock_guard<std::mutex> lock(mtx_);
+    
+    if (!control_listener_running_) {
+        return;
+    }
+    
+    control_listener_running_ = false;
+    control_cmd_handler_ = nullptr;
+    
+    // Note: We don't stop the listener thread here because it might still be needed
+    // for config messages. The listener will continue running if config_handler_ is set.
+    // If both are stopped, the listener will be stopped by StopConfigListener().
+    
+    mdclog_write(MDCLOG_INFO, "[AI-TCP] Control command handler removed (listener thread continues running)");
+}
+
 void AiTcpClient::configListenerLoop() {
+    mdclog_write(MDCLOG_INFO, "[AI-TCP] Listener loop started (waiting for connection...)");
+    int consecutive_no_connection = 0;
     while (listener_running_) {
-        std::lock_guard<std::mutex> lock(mtx_);
+        int current_sock = -1;
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            current_sock = sock_;
+        }
         
-        if (sock_ < 0) {
-            // Not connected yet, wait a bit
+        // Sleep outside of lock if not connected
+        if (current_sock < 0) {
+            consecutive_no_connection++;
+            // Log every 50 iterations (5 seconds) that we're waiting
+            if (consecutive_no_connection % 50 == 0) {
+                mdclog_write(MDCLOG_DEBUG, "[AI-TCP] Listener waiting for socket connection (waited %d seconds)...", 
+                            consecutive_no_connection / 10);
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
         
-        // Use poll to check if data is available (non-blocking)
-        pollfd pfd{};
-        pfd.fd = sock_;
-        pfd.events = POLLIN;
+        // Reset counter when connected
+        if (consecutive_no_connection > 0) {
+            mdclog_write(MDCLOG_INFO, "[AI-TCP] Listener detected socket connection (socket=%d)", current_sock);
+            consecutive_no_connection = 0;
+        }
         
+        // Poll outside of lock to avoid blocking other operations
+        pollfd pfd{};
+        pfd.fd = current_sock;
+        pfd.events = POLLIN;
         int ret = poll(&pfd, 1, 100); // 100ms timeout
         
         if (ret > 0 && (pfd.revents & POLLIN)) {
             // Data available, try to read a config message
+            mdclog_write(MDCLOG_DEBUG, "[AI-TCP] Data available on socket, reading message...");
+            std::lock_guard<std::mutex> lock(mtx_);
             uint32_t len_net = 0;
             if (recvAll(&len_net, sizeof(len_net))) {
                 uint32_t len = ntohl(len_net);
                 if (len > 0 && len <= 1024 * 1024) {
                     std::string config_json(len, '\0');
                     if (recvAll(&config_json[0], len)) {
+                        mdclog_write(MDCLOG_DEBUG, "[AI-TCP] Received message from AI (len=%u): %s", 
+                                    len, config_json.substr(0, 200).c_str());
+                        // Check if it's a control command message
+                        if (config_json.find("\"type\":\"control\"") != std::string::npos || 
+                            config_json.find("\"type\": \"control\"") != std::string::npos) {
+                            mdclog_write(MDCLOG_INFO, "[AI-TCP] ✅ Detected control command message (len=%u)", len);
+                            // This is a control command - parse and route to control command handler
+                            if (control_cmd_handler_) {
+                                // Parse JSON to extract meid and cmd using rapidjson
+                                // Expected format: {"type":"control","meid":"...","cmd":{...}}
+                                // or: {"type":"control","meid":"...","command":{...}}
+                                rapidjson::Document doc;
+                                if (doc.Parse(config_json.c_str()).HasParseError()) {
+                                    mdclog_write(MDCLOG_WARN, "[AI-TCP] Failed to parse control command JSON: %s", 
+                                                config_json.c_str());
+                                    continue;
+                                }
+                                
+                                if (!doc.IsObject()) {
+                                    mdclog_write(MDCLOG_WARN, "[AI-TCP] Control command is not a JSON object: %s", 
+                                                config_json.c_str());
+                                    continue;
+                                }
+                                
+                                // Extract meid
+                                std::string meid;
+                                if (doc.HasMember("meid") && doc["meid"].IsString()) {
+                                    meid = doc["meid"].GetString();
+                                }
+                                
+                                // Extract cmd (try "cmd" first, then "command")
+                                std::string cmd_json;
+                                if (doc.HasMember("cmd")) {
+                                    if (doc["cmd"].IsString()) {
+                                        // If cmd is a string, use it directly
+                                        cmd_json = doc["cmd"].GetString();
+                                        mdclog_write(MDCLOG_INFO, "[AI-TCP] cmd is a string: '%s'", cmd_json.c_str());
+                                    } else if (doc["cmd"].IsObject()) {
+                                        // If cmd is an object, serialize it
+                                        rapidjson::StringBuffer buffer;
+                                        rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+                                        doc["cmd"].Accept(writer);
+                                        cmd_json = buffer.GetString();
+                                        mdclog_write(MDCLOG_INFO, "[AI-TCP] cmd is an object, serialized to: '%s'", cmd_json.c_str());
+                                    } else {
+                                        mdclog_write(MDCLOG_WARN, "[AI-TCP] cmd field exists but is neither string nor object (type=%d)", doc["cmd"].GetType());
+                                    }
+                                } else if (doc.HasMember("command")) {
+                                    if (doc["command"].IsString()) {
+                                        // If command is a string, use it directly
+                                        cmd_json = doc["command"].GetString();
+                                        mdclog_write(MDCLOG_INFO, "[AI-TCP] command is a string: '%s'", cmd_json.c_str());
+                                    } else if (doc["command"].IsObject()) {
+                                        // If command is an object, serialize it
+                                        rapidjson::StringBuffer buffer;
+                                        rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+                                        doc["command"].Accept(writer);
+                                        cmd_json = buffer.GetString();
+                                        mdclog_write(MDCLOG_INFO, "[AI-TCP] command is an object, serialized to: '%s'", cmd_json.c_str());
+                                    } else {
+                                        mdclog_write(MDCLOG_WARN, "[AI-TCP] command field exists but is neither string nor object");
+                                    }
+                                } else {
+                                    mdclog_write(MDCLOG_WARN, "[AI-TCP] No 'cmd' or 'command' field found in control message");
+                                }
+                                
+                                if (!meid.empty() && !cmd_json.empty()) {
+                                    mdclog_write(MDCLOG_INFO, "[AI-TCP] ✅ Extracted control command: meid='%s', cmd_json='%s' (len=%zu)", 
+                                                meid.c_str(), cmd_json.c_str(), cmd_json.size());
+                                    mdclog_write(MDCLOG_INFO, "[AI-TCP] → Forwarding to send_ctrl_ callback...");
+                                    control_cmd_handler_(meid, cmd_json);
+                                    mdclog_write(MDCLOG_INFO, "[AI-TCP] ✅ send_ctrl_ callback returned");
+                                } else {
+                                    mdclog_write(MDCLOG_WARN, "[AI-TCP] ❌ Received control command but missing meid or cmd: meid='%s' (len=%zu), cmd='%s' (len=%zu)", 
+                                                meid.c_str(), meid.size(), cmd_json.c_str(), cmd_json.size());
+                                }
+                            }
+                            continue;
+                        }
+                        
                         // Check if it's a config message (not a recommendation response)
                         if (config_json.find("\"type\":\"config\"") != std::string::npos ||
                             config_json.find("\"type\":\"qos\"") != std::string::npos ||
@@ -303,18 +459,18 @@ void AiTcpClient::configListenerLoop() {
                 }
             } else {
                 // Connection lost, reset
+                mdclog_write(MDCLOG_WARN, "[AI-TCP] Failed to read message length, resetting connection");
                 reset();
             }
         } else if (ret < 0) {
             // Error
+            mdclog_write(MDCLOG_WARN, "[AI-TCP] Poll error, resetting connection");
             reset();
         }
-        
-        // Release lock before sleep
+        // If ret == 0, timeout - just continue loop
     }
     
-    // Re-acquire lock for unlock
-    std::lock_guard<std::mutex> lock(mtx_);
+    mdclog_write(MDCLOG_INFO, "[AI-TCP] Listener loop exited");
 }
 
 // Global singleton with env-configurable host/port

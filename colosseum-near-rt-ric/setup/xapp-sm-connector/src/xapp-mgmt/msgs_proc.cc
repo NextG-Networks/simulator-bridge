@@ -181,40 +181,43 @@ static inline void PublishKpiToExternal(const std::string& meid,
 static inline std::string RequestRecommendation(const std::string& meid,
                                                 const std::string& kpi_json)
 {
-    // For testing: send bandwidth change after first indication
-    /* static std::atomic<bool> first_indication_sent{false};
-    static std::mutex test_mutex;
+    // // For testing: send bandwidth change after first indication
+    // static std::atomic<bool> first_indication_sent{false};
+    // static std::mutex test_mutex;
     
-    {
-        std::lock_guard<std::mutex> lock(test_mutex);
-        if (!first_indication_sent) {
-            first_indication_sent = true;
+    // {
+    //     std::lock_guard<std::mutex> lock(test_mutex);
+    //     if (!first_indication_sent) {
+    //         first_indication_sent = true;
             
-            // Schedule test command after 10 seconds
-            std::thread([meid]() {
-                std::this_thread::sleep_for(std::chrono::seconds(10));
+    //         // Schedule test command after 10 seconds
+    //         std::thread([meid]() {
+    //             std::this_thread::sleep_for(std::chrono::seconds(10));
                 
-                // Send bandwidth change command
-                std::string cmd = "{\"cmd\":\"set-bandwidth\",\"node\":0,\"bandwidth\":0}";
+    //             // Send bandwidth change command
+    //             std::string cmd = "{\"cmd\":\"set-bandwidth\",\"node\":0,\"bandwidth\":0}";
                 
-                // Get access to xApp instance to send command
-                // Note: You'll need to pass the control sender callback here
-                // For now, this is a placeholder - see Option 2 for better approach
-                mdclog_write(MDCLOG_INFO, "[TEST] Would send command: %s to %s", 
-                            cmd.c_str(), meid.c_str());
-            }).detach();
-        }
-    } */
-	// return "{\"cmd\":\"set-bandwidth\",\"node\":0,\"bandwidth\":0}";
-	//return "{\"cmd\":\"set-mcs\",\"node\":2,\"mcs\":0}";
+    //             // Get access to xApp instance to send command
+    //             // Note: You'll need to pass the control sender callback here
+    //             // For now, this is a placeholder - see Option 2 for better approach
+    //             mdclog_write(MDCLOG_INFO, "[TEST] Would send command: %s to %s", 
+    //                         cmd.c_str(), meid.c_str());
+    //         }).detach();
+    //     }
+    // }
+	// // return "{\"cmd\":\"set-bandwidth\",\"node\":0,\"bandwidth\":0}";
+	// return "{\"cmd\":\"set-mcs\",\"node\":2,\"mcs\":0}";
+
 
     
     // Original AI recommendation logic
     std::string cmd;
+	mdclog_write(MDCLOG_INFO, "Requesting recommendation from AI for MEID=%s", meid.c_str());
     if (GetAiTcpClient().GetRecommendation(meid, kpi_json, cmd)) {
-         return cmd;
+		mdclog_write(MDCLOG_INFO, "Sending control command to ns-3: %s", cmd.c_str());
+        return cmd;
     }
-	return "";
+    return "";
 }
 
 
@@ -252,35 +255,19 @@ void XappMsgHandler::operator()(rmr_mbuf_t *message, bool *resend){
 			// Decode E2SM and get decoded JSON
 			std::string decoded_json = process_ric_indication(message->mtype, me_id, message->payload, message->len);
 
-			// 1) Forward decoded KPI to external system (non-blocking)
+			// 1) Forward decoded KPI to external system (non-blocking, fire-and-forget)
 			// Only send if we successfully decoded, otherwise skip (don't send raw hex)
 			if (!decoded_json.empty()) {
 				PublishKpiToExternal(meid_str, decoded_json);
+				// Note: The external system will reactively send control commands back
+				// via the control command listener (set up in main). No polling needed.
 			} else {
 				mdclog_write(MDCLOG_WARN, "Failed to decode E2SM message for MEID=%s, skipping", meid_str.c_str());
 			}
 
-			// 2) Ask external system for recommendation on a detached worker
-			//    so we never block the RMR receive thread.
-			if (send_ctrl_ && !decoded_json.empty()) {
-				std::thread([this, meid_str, decoded_json]() {
-					// Blocking call into your external brain; replace stub later
-					std::string cmd_json = RequestRecommendation(meid_str, decoded_json);
-
-					if (!cmd_json.empty()) {
-						mdclog_write(MDCLOG_INFO, "[REC←EXT] MEID=%s cmd=%s",
-									meid_str.c_str(), cmd_json.c_str());
-						// Ship the command over RIC/E2 using the already-registered sender
-						send_ctrl_(cmd_json, meid_str);
-					} else {
-						mdclog_write(MDCLOG_INFO, "[REC←EXT] MEID=%s no-action", meid_str.c_str());
-					}
-				}).detach();
-			} else {
-				mdclog_write(MDCLOG_WARN,
-							"[HOOK] send_ctrl_ not set; call set_control_sender() before processing messages (this=%p)",
-							(void*)this);
-			}
+			// 2) REMOVED: No longer polling for recommendations.
+			// The external system will reactively send control commands when ready.
+			// Control commands are handled by the listener set up in main().
 			break;
 		}
 

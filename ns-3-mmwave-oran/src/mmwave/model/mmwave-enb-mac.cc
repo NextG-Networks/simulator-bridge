@@ -82,6 +82,9 @@ MmWaveEnbMacMemberEnbCmacSapProvider::MmWaveEnbMacMemberEnbCmacSapProvider(MmWav
 {
 }
 
+
+
+
 void
 MmWaveEnbMacMemberEnbCmacSapProvider::ConfigureMac(uint8_t ulBandwidth, uint8_t dlBandwidth)
 {
@@ -162,6 +165,12 @@ class MmWaveMacEnbMemberPhySapUser : public MmWaveEnbPhySapUser
 MmWaveMacEnbMemberPhySapUser::MmWaveMacEnbMemberPhySapUser(MmWaveEnbMac* mac)
     : m_mac(mac)
 {
+}
+
+Ptr<MmWaveMacScheduler>
+MmWaveEnbMac::GetMacScheduler() const
+{
+    return m_macScheduler;
 }
 
 void

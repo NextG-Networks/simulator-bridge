@@ -116,11 +116,18 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
         return true;
     };
 
+    fprintf(stderr, "[RicControlMessage] ApplySimpleCommand: Input JSON = '%s' (len=%zu)\n", json.c_str(), json.size());
+    fflush(stderr);
+    
     std::string cmd;
     if (!FindString(json, "\"cmd\"", cmd)) {
-        fprintf(stderr, "[RicControlMessage] No 'cmd' in control JSON\n");
+        fprintf(stderr, "[RicControlMessage] ERROR: No 'cmd' found in control JSON: '%s'\n", json.c_str());
+        fflush(stderr);
         return;
     }
+    
+    fprintf(stderr, "[RicControlMessage] Extracted cmd = '%s'\n", cmd.c_str());
+    fflush(stderr);
 
     if (cmd == "move-enb") {
         uint32_t nodeId = 0;
@@ -249,9 +256,11 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
             Ptr<mmwave::MmWaveEnbMac> mac = enbDev->GetMac();
             if (mac) {
                 mac->SetMcs(mcs);
-                fprintf(stderr, "[RicControlMessage] set-mcs: node %u MCS set to %d\n", nodeId, mcs);
+                fprintf(stderr, "[RicControlMessage] ✅ set-mcs: node %u MCS set to %d\n", nodeId, mcs);
+                fflush(stderr);
             } else {
-                fprintf(stderr, "[RicControlMessage] set-mcs: node %u has no MAC layer\n", nodeId);
+                fprintf(stderr, "[RicControlMessage] ❌ set-mcs: node %u has no MAC layer\n", nodeId);
+                fflush(stderr);
             }
         });
         return;
@@ -326,7 +335,8 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
         return;
     }
 
-    fprintf(stderr, "[RicControlMessage] Unknown cmd='%s'\n", cmd.c_str());
+    fprintf(stderr, "[RicControlMessage] ❌ Unknown cmd='%s' (valid commands: move-enb, stop, set-mcs, set-bandwidth)\n", cmd.c_str());
+    fflush(stderr);
 }
 
 
@@ -346,8 +356,6 @@ RicControlMessage::~RicControlMessage ()
 void
 RicControlMessage::DecodeRicControlMessage(E2AP_PDU_t* pdu)
 {
-    fprintf(stderr, "[RicControlMessage] DecodeRicControlMessage CALLED\n");
-
     if (!pdu) {
         fprintf(stderr, "[RicControlMessage] ERROR: pdu is null\n");
         return;
@@ -403,8 +411,19 @@ RicControlMessage::DecodeRicControlMessage(E2AP_PDU_t* pdu)
     // RAW dump of the control message payload
     std::string ascii;
     if (rawCtrlMsgBuf && rawCtrlMsgLen > 0) {
-        ascii.assign(reinterpret_cast<const char*>(rawCtrlMsgBuf),
-                     static_cast<size_t>(rawCtrlMsgLen));
+        // Remove null terminator if present (the xApp sends null-terminated strings)
+        size_t actualLen = rawCtrlMsgLen;
+        if (rawCtrlMsgLen > 0 && rawCtrlMsgBuf[rawCtrlMsgLen - 1] == '\0') {
+            actualLen = rawCtrlMsgLen - 1;
+        }
+        
+        ascii.assign(reinterpret_cast<const char*>(rawCtrlMsgBuf), actualLen);
+        
+        // Trim any trailing whitespace or nulls
+        while (!ascii.empty() && (ascii.back() == '\0' || ascii.back() == ' ' || ascii.back() == '\n' || ascii.back() == '\r')) {
+            ascii.pop_back();
+        }
+        
         static const char* HEX = "0123456789abcdef";
         std::string hex; hex.reserve(rawCtrlMsgLen * 2);
         for (size_t i = 0; i < rawCtrlMsgLen; ++i) {
@@ -412,18 +431,23 @@ RicControlMessage::DecodeRicControlMessage(E2AP_PDU_t* pdu)
             hex.push_back(HEX[(c >> 4) & 0xF]);
             hex.push_back(HEX[c & 0xF]);
         }
-        fprintf(stderr, "[RicControlMessage] RAW RICcontrolMessage len=%zu ascii='%s' hex=%s\n",
-                rawCtrlMsgLen, ascii.c_str(), hex.c_str());
+        fprintf(stderr, "[RicControlMessage] RAW RICcontrolMessage len=%zu (actual=%zu) ascii='%s' hex=%s\n",
+                rawCtrlMsgLen, ascii.size(), ascii.c_str(), hex.c_str());
+        fflush(stderr);
     } else {
         fprintf(stderr, "[RicControlMessage] RAW RICcontrolMessage is empty or missing\n");
+        fflush(stderr);
     }
 
     // Proof-of-concept: interpret a tiny JSON with "cmd" and apply it
     if (!ascii.empty()) {
+        fprintf(stderr, "[RicControlMessage] Calling ApplySimpleCommand with: '%s'\n", ascii.c_str());
+        fflush(stderr);
         ApplySimpleCommand(ascii);
+    } else {
+        fprintf(stderr, "[RicControlMessage] ERROR: Control message payload is empty, cannot apply command\n");
+        fflush(stderr);
     }
-
-    fprintf(stderr, "[RicControlMessage] DecodeRicControlMessage END\n");
 }
 
 

@@ -42,6 +42,13 @@ public:
     // When AI sends a config, calls handler(config_json)
     void StartConfigListener(std::function<bool(const std::string&)> handler);
     void StopConfigListener();
+    
+    // Listen for reactive control commands from AI (non-blocking, runs in background)
+    // When AI sends a control command, calls handler(meid, cmd_json)
+    // Expected message format: {"type":"control","meid":"...","cmd":{...}}
+    // or: {"type":"control","meid":"...","command":{...}}
+    void StartControlCommandListener(std::function<bool(const std::string&, const std::string&)> handler);
+    void StopControlCommandListener();
 
 private:
     bool ensureConnected();
@@ -60,6 +67,11 @@ private:
     std::atomic<bool> listener_running_;
     std::unique_ptr<std::thread> listener_thread_;
     void configListenerLoop();
+    
+    // Control command listener (for reactive control commands)
+    // Uses the same listener loop as config listener (configListenerLoop)
+    std::function<bool(const std::string&, const std::string&)> control_cmd_handler_;
+    std::atomic<bool> control_listener_running_;
 };
 
 // Global accessor used by msgs_proc.cc so we don't pass instances around.

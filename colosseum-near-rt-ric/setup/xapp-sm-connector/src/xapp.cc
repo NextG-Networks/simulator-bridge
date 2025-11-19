@@ -40,8 +40,6 @@ std::vector<std::string> drl_agent_ip{AGENT_0};
 }
 
 void Xapp::send_control_text(const std::string& text, const std::string& gnb_id) {
-    // ensure null-terminated char* for the existing helper
-    mdclog_write(MDCLOG_INFO, "[CTRL] send_control_text: len=%zu meid=%s", text.size(), gnb_id.c_str());
     std::vector<char> buf(text.begin(), text.end());
     buf.push_back('\0');
     send_ric_control_request(buf.data(), gnb_id);
@@ -374,50 +372,28 @@ void Xapp::terminate_du_reporting(void) {
 
 void Xapp::send_ric_control_request(char* payload, std::string gnb_id) {
 
-    std::cout << "Sending RIC Control Request" << std::endl;
-
 	bool res;
 	size_t data_size = ASN_BUFF_MAX_SIZE;
 	unsigned char	data[data_size];
 	unsigned char meid[RMR_MAX_MEID];
 	std::string xapp_id = config_ref->operator [](XappSettings::SettingName::XAPP_ID);
 
-	mdclog_write(MDCLOG_INFO, "Preparing to send control in file= %s, line=%d", __FILE__, __LINE__);
 
     auto gnblist = get_rnib_gnblist();
     int sz = gnblist.size();
 
     if(sz <= 0) {
-	   mdclog_write(MDCLOG_INFO, "Subscriptions cannot be sent as GNBList in RNIB is NULL");
         return;
     }
 
 	// give the message to subscription handler, along with the transmitter.
  	strcpy((char*)meid, gnb_id.c_str());
-	std::cout << "RIC Control Request, gNB " << gnb_id << std::endl;
 
  	// helpers
- 	// set fields randomly
  	ric_control_helper din {};
-       	//= {
- 	//	1,
- 	//	1,
- 	//	0,
- 	//	1,
- 	//	-1,
- 	//	0,
- 	//	0,
- 	//	1,
- 	//	"test", // control_msg
- 	//	5, // control_msg_size
- 	//	"testh", // control header
- 	//	6,
- 	//	"testp", // call process id
- 	//	6
- 	//};
+	din.func_id = 300;  // Must match the function ID registered in ns-3 (MmWaveEnbNetDevice registers with 300)
 	const char* msg = payload;
 	din.control_msg_size = strlen(msg) + 1;
-	mdclog_write(MDCLOG_INFO, "Size of msg %d", din.control_msg_size);
 	din.control_msg = (uint8_t*) calloc(din.control_msg_size, sizeof(uint8_t));
 	std::memcpy(din.control_msg, msg, din.control_msg_size);
  	ric_control_helper dout {};
@@ -430,18 +406,17 @@ void Xapp::send_ric_control_request(char* payload, std::string gnb_id) {
     size_t buf_size = BUFFER_SIZE;
 
  	res = ctrl_req.encode_e2ap_control_request(&buf[0], &buf_size, din);
+	
+	if (!res) {
+		return;
+	}
 
  	xapp_rmr_header rmr_header;
 	rmr_header.message_type = RIC_CONTROL_REQ;
 	rmr_header.payload_length = buf_size; //data_size
 	strcpy((char*)rmr_header.meid, gnb_id.c_str());
 
-	mdclog_write(MDCLOG_INFO, "Sending CTRL REQ in file= %s, line=%d for MEID %s", __FILE__, __LINE__, meid);
-
-    int result = rmr_ref->xapp_rmr_send(&rmr_header, (void*)buf);
-    if(result) {
-   	    mdclog_write(MDCLOG_INFO, "CTRL REQ SUCCESSFUL in file= %s, line=%d for MEID %s",__FILE__,__LINE__, meid);
-    }
+    rmr_ref->xapp_rmr_send(&rmr_header, (void*)buf);
 }
 
 void Xapp::startup_subscribe_requests(void ){

@@ -79,13 +79,14 @@ public:
     // }
 
     void set_control_sender(ControlSender f) {
-        if (!f) {
-            mdclog_write(MDCLOG_WARN, "set_control_sender called with empty function");
-        } else {
-            mdclog_write(MDCLOG_INFO, "set_control_sender installed");
-        }
         send_ctrl_ = std::move(f);
-        mdclog_write(MDCLOG_INFO, "msgs_proc this=%p: control sender set", (void*)this);
+    }
+
+    // Public method to send control commands (uses the registered send_ctrl_ callback)
+    void send_control(const std::string& text, const std::string& meid) {
+        if (send_ctrl_) {
+            send_ctrl_(text, meid);
+        }
     }
 };
 

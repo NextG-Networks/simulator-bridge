@@ -145,6 +145,7 @@ class MmWaveEnbMac : public Object
     void SetForwardUpCallback(Callback<void, Ptr<Packet>> cb);
 
     //  void PhyPacketRx (Ptr<Packet> p);
+    Ptr<MmWaveMacScheduler> GetMacScheduler() const;
 
     void DoReceivePhyPdu(Ptr<Packet> p);
 
@@ -291,6 +292,8 @@ class MmWaveEnbMac : public Object
     std::map<uint8_t, NcRaPreambleInfo> m_allocatedNcRaPreambleMap;
 
     uint16_t m_cellId;
+
+    Ptr<MmWaveMacScheduler> m_macScheduler;  // Add this member variable
 
     TracedCallback<uint16_t, uint16_t, uint32_t, uint8_t> m_macDlTxSizeRetx;
 

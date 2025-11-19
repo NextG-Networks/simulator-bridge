@@ -1768,6 +1768,30 @@ MmWaveFlexTtiMacScheduler::DoSchedSetMcs(int mcs)
     }
 }
 
+uint8_t
+MmWaveFlexTtiMacScheduler::GetCurrentMcsDl() const
+{
+    return m_fixedMcsDl ? m_mcsDefaultDl : 255; // 255 means adaptive/not fixed
+}
+
+uint8_t
+MmWaveFlexTtiMacScheduler::GetCurrentMcsUl() const
+{
+    return m_fixedMcsUl ? m_mcsDefaultUl : 255; // 255 means adaptive/not fixed
+}
+
+bool
+MmWaveFlexTtiMacScheduler::IsFixedMcsDl() const
+{
+    return m_fixedMcsDl;
+}
+
+bool
+MmWaveFlexTtiMacScheduler::IsFixedMcsUl() const
+{
+    return m_fixedMcsUl;
+}
+
 // void
 // MmWaveFlexTtiMacScheduler::DoSchedSetMcs(int mcs)
 // {
