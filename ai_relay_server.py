@@ -20,6 +20,9 @@ import os
 XAPP_LISTEN_HOST = "0.0.0.0"
 XAPP_LISTEN_PORT = 5000  # Port where xApp connects to
 
+# Command interface port (for test scripts)
+CMD_INTERFACE_PORT = 5002
+
 # External AI server configuration
 EXTERNAL_AI_HOST = os.getenv("EXTERNAL_AI_HOST", "127.0.0.1")
 EXTERNAL_AI_PORT = int(os.getenv("EXTERNAL_AI_PORT", "6000"))
@@ -239,11 +242,100 @@ def handle_xapp_connection(conn, addr):
         conn.close()
         print(f"[RELAY] xApp {addr} disconnected")
 
+def handle_command_interface(conn, addr):
+    """Handle commands from test scripts via TCP (port 5002)"""
+    try:
+        print(f"[RELAY] Command interface: Connected from {addr}")
+        data = conn.recv(4096)
+        if not data:
+            return
+        
+        try:
+            cmd_json = json.loads(data.decode("utf-8"))
+            meid = cmd_json.get("meid", "")
+            cmd = cmd_json.get("cmd", {})
+            
+            if not meid or not cmd:
+                response = {"status": "error", "message": "Missing 'meid' or 'cmd' field"}
+                conn.sendall(json.dumps(response).encode("utf-8"))
+                return
+            
+            # Format as control message
+            control_msg = {
+                "type": "control",
+                "meid": meid,
+                "cmd": cmd
+            }
+            control_msg_json = json.dumps(control_msg)
+            
+            print(f"[RELAY] Command interface: Received command for meid={meid}, cmd={cmd}")
+            
+            # Forward directly to xApp (bypassing external AI)
+            with connections_lock:
+                if not xapp_connections:
+                    response = {"status": "error", "message": "No xApp connections available"}
+                    conn.sendall(json.dumps(response).encode("utf-8"))
+                    print(f"[RELAY] ⚠️  No xApp connections available, cannot forward command")
+                    return
+                
+                # Forward to all connected xApps (usually just one)
+                success = False
+                for xapp_addr, xapp_conn in list(xapp_connections.items()):
+                    try:
+                        if send_framed(xapp_conn, control_msg_json):
+                            print(f"[RELAY] ✅ Forwarded command to xApp {xapp_addr}")
+                            success = True
+                        else:
+                            print(f"[RELAY] ❌ Failed to forward to xApp {xapp_addr}")
+                    except Exception as e:
+                        print(f"[RELAY] ❌ Error forwarding to xApp {xapp_addr}: {e}")
+                
+                if success:
+                    response = {"status": "ok", "message": f"Command forwarded to xApp for MEID {meid}"}
+                else:
+                    response = {"status": "error", "message": "Failed to forward command to xApp"}
+                
+                conn.sendall(json.dumps(response).encode("utf-8"))
+                
+        except json.JSONDecodeError as e:
+            response = {"status": "error", "message": f"Invalid JSON: {e}"}
+            conn.sendall(json.dumps(response).encode("utf-8"))
+        except Exception as e:
+            response = {"status": "error", "message": str(e)}
+            conn.sendall(json.dumps(response).encode("utf-8"))
+            print(f"[RELAY] Command interface error: {e}")
+            import traceback
+            traceback.print_exc()
+            
+    except Exception as e:
+        print(f"[RELAY] Command interface error: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        conn.close()
+
+def command_interface_server():
+    """Run TCP server for command interface on separate port (5002)"""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((XAPP_LISTEN_HOST, CMD_INTERFACE_PORT))
+            s.listen(5)
+            print(f"[RELAY] ✅ Command interface listening on {XAPP_LISTEN_HOST}:{CMD_INTERFACE_PORT}")
+            while True:
+                conn, addr = s.accept()
+                threading.Thread(target=handle_command_interface, args=(conn, addr), daemon=True).start()
+    except Exception as e:
+        print(f"[RELAY] ❌ Command interface server error: {e}")
+        import traceback
+        traceback.print_exc()
+
 def main():
     print(f"[RELAY] =========================================")
     print(f"[RELAY] AI Relay Server")
     print(f"[RELAY] =========================================")
     print(f"[RELAY] Listening for xApp on: {XAPP_LISTEN_HOST}:{XAPP_LISTEN_PORT}")
+    print(f"[RELAY] Command interface on: {XAPP_LISTEN_HOST}:{CMD_INTERFACE_PORT}")
     print(f"[RELAY] Forwarding to external AI: {EXTERNAL_AI_HOST}:{EXTERNAL_AI_PORT}")
     print(f"[RELAY]")
     print(f"[RELAY] Environment variables:")
@@ -253,10 +345,13 @@ def main():
     print(f"[RELAY] Starting relay server...")
     print(f"[RELAY]")
     
+    # Start command interface server in background
+    threading.Thread(target=command_interface_server, daemon=True).start()
+    
     # Connect to external AI in background
     threading.Thread(target=connect_to_external_ai, daemon=True).start()
     
-    # Give AI connection a moment to establish
+    # Give servers a moment to start
     time.sleep(1)
     
     try:

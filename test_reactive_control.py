@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-Test script to manually trigger reactive control commands in the dummy AI server.
+Test script to manually trigger reactive control commands.
 
 Usage:
     python3 test_reactive_control.py
 
-This script sends commands to the dummy AI server via TCP (port 5002).
-The dummy AI server must be running.
+This script sends commands via TCP (port 5002) to either:
+- ai_relay_server.py (relay server)
+- ai_dummy_server.py (dummy server)
+
+The server must be running.
 """
 
 import time
@@ -15,7 +18,7 @@ import socket
 import json
 
 def send_command_to_server(meid, cmd_dict, host="127.0.0.1", port=5002):
-    """Send a command to the dummy AI server via TCP"""
+    """Send a command to the AI server via TCP (command interface port)"""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(5.0)  # 5 second timeout
@@ -51,27 +54,29 @@ def main():
     print("Reactive Control Command Test Script")
     print("=" * 80)
     print()
-    print("This script will send test control commands to the dummy AI server.")
-    print("Make sure the dummy AI server (ai_dummy_server.py) is running first!")
+    print("This script will send test control commands to the AI server.")
+    print("Make sure one of these is running:")
+    print("  - ai_relay_server.py (relay server)")
+    print("  - ai_dummy_server.py (dummy server)")
     print()
     
     # Test connection to command interface
-    print("Testing connection to dummy AI server...")
+    print("Testing connection to AI server (port 5002)...")
     test_result = send_command_to_server("test", {"cmd": "test"}, port=5002)
     if test_result.get("status") == "error":
         print(f"❌ {test_result.get('message')}")
         print()
         print("Troubleshooting:")
-        print("  1. Make sure ai_dummy_server.py is running")
+        print("  1. Make sure ai_relay_server.py or ai_dummy_server.py is running")
         print("  2. Check that it's listening on port 5002")
-        print("  3. Check the dummy AI server logs for errors")
+        print("  3. Check the server logs for errors")
         print()
         response = input("Continue anyway? (y/n): ").strip().lower()
         if response != 'y':
             print("Exiting...")
             return
     else:
-        print("✅ Connected to dummy AI server")
+        print("✅ Connected to AI server")
     print()
     
     # Example MEIDs (adjust to match your setup)
@@ -155,7 +160,7 @@ def main():
             print("Invalid choice!")
             return
         
-        print("\n✅ Command sent! Check the dummy AI server and xApp logs to confirm.")
+        print("\n✅ Command sent! Check the AI server and xApp logs to confirm.")
         print("   The xApp should receive and process the control command.")
         print("   Check ns-3 scenario logs for: [RicControlMessage] set-mcs: ...")
         

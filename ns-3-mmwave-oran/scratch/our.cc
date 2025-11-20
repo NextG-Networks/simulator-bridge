@@ -60,7 +60,7 @@ static GlobalValue g_e2TermIp ("e2TermIp","RIC E2 termination IP",
 static GlobalValue g_enableE2FileLogging ("enableE2FileLogging","Offline file logging instead of connecting to RIC",
                                           BooleanValue(false), MakeBooleanChecker());
 static GlobalValue g_reducedPmValues ("reducedPmValues", "If true, use a subset of the pm containers",
-                                      BooleanValue(true), MakeBooleanChecker());
+                                      BooleanValue(false), MakeBooleanChecker());
 
 
 
