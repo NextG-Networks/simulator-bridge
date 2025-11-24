@@ -24,8 +24,8 @@ CSV_UE_FILE = "../ue_kpis.csv"
 
 # InfluxDB configuration
 INFLUXDB_URL = os.getenv("INFLUXDB_URL", "http://localhost:8086")
-INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN", "my-token")
-INFLUXDB_ORG = os.getenv("INFLUXDB_ORG", "my-org")
+INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN", "my-super-secret-auth-token")
+INFLUXDB_ORG = os.getenv("INFLUXDB_ORG", "ns3-org")
 INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET", "ns3-kpis")
 
 # Track last processed rows
@@ -70,7 +70,7 @@ class CSVHandler(FileSystemEventHandler):
                             pass
                 
                 # Add tags (dimensions)
-                if 'cell_id' in row and pd.notna(row['cell_id']):
+                if 'cell_id' in row and pd.notna(row['cell_id']) and str(row['cell_id']).upper() != 'N/A':
                     point.tag("cell_id", str(row['cell_id']))
                 
                 # Add fields (metrics)
@@ -118,9 +118,9 @@ class CSVHandler(FileSystemEventHandler):
                             pass
                 
                 # Add tags (dimensions)
-                if 'ue_id' in row and pd.notna(row['ue_id']):
+                if 'ue_id' in row and pd.notna(row['ue_id']) and str(row['ue_id']).upper() != 'N/A':
                     point.tag("ue_id", str(row['ue_id']))
-                if 'cell_id' in row and pd.notna(row['cell_id']):
+                if 'cell_id' in row and pd.notna(row['cell_id']) and str(row['cell_id']).upper() != 'N/A':
                     point.tag("cell_id", str(row['cell_id']))
                 
                 # Add fields (metrics)

@@ -1,122 +1,351 @@
-# KPI Dashboard - Real-Time Visualization
+# KPI Dashboard - Grafana Visualization
 
-A real-time web-based dashboard for visualizing KPIs from NS3 simulation.
+A professional real-time dashboard for visualizing KPIs from NS3 simulation using Grafana and InfluxDB.
 
-> **NEW**: Enhanced real-time dashboard and Grafana integration available! See [README_DASHBOARD_REALTIME.md](README_DASHBOARD_REALTIME.md) for details.
+## Overview
+
+This dashboard solution uses **Grafana** as the primary visualization platform, with **InfluxDB** as the time-series database. Data flows from NS3 simulation → CSV files → InfluxDB → Grafana for real-time monitoring and analysis.
+
+> **Note**: Streamlit dashboards are deprecated. Use Grafana for production monitoring.
 
 ## Features
 
-- **Real-Time Updates**: Auto-refreshes every 0.5-5 seconds (configurable)
-- **Cell-Level KPIs**: Visualize gNB/cell metrics
-- **UE-Level KPIs**: Visualize per-UE metrics
-- **Interactive Charts**: Plotly-based interactive visualizations
-- **Data Tables**: View and download raw CSV data
-- **Multi-Metric Views**: Compare multiple KPIs simultaneously
+- **Real-Time Updates**: Auto-refreshes every 5 seconds (configurable)
+- **Cell-Level KPIs**: Visualize gNB/cell metrics with filtering
+- **UE-Level KPIs**: Visualize per-UE metrics with filtering
+- **Interactive Charts**: Professional time-series visualizations
+- **Variable Filtering**: Filter by Cell ID and UE ID dynamically
+- **Multiple Panels**: Comprehensive view of all available KPIs
+- **Historical Data**: Query and visualize historical data from InfluxDB
+
+## Architecture
+
+```
+NS3 Simulation → CSV Files → CSV-to-InfluxDB Bridge → InfluxDB → Grafana Dashboard
+```
 
 ## Installation
 
-```bash
-# Install required packages
-pip3 install -r requirements_dashboard.txt
+### 1. Install Dependencies
 
-# Or install manually
-pip3 install streamlit pandas plotly
+```bash
+# Install Python dependencies for CSV bridge
+cd ai-dashboard
+./install_dashboard.sh
 ```
+
+This installs:
+
+- `influxdb-client` - For writing data to InfluxDB
+- `pandas` - For CSV processing
+- `watchdog` - For file monitoring
+
+### 2. Setup Grafana and InfluxDB
+
+```bash
+# Run the setup script to create docker-compose.yml and configurations
+./setup_grafana.sh
+
+# Start Grafana and InfluxDB containers
+docker compose up -d
+```
+
+This will:
+
+- Create `docker-compose.yml` with Grafana and InfluxDB services
+- Configure InfluxDB with default credentials
+- Provision Grafana datasource and dashboard
+
+### 3. Start CSV to InfluxDB Bridge
+
+```bash
+# In a separate terminal, start the bridge
+cd ai-dashboard
+python3 csv_to_influxdb.py
+```
+
+The bridge will:
+
+- Watch for changes to `gnb_kpis.csv` and `ue_kpis.csv`
+- Convert CSV data to InfluxDB points
+- Write data to InfluxDB in real-time
 
 ## Usage
 
-### Quick Start
+### Access Grafana Dashboard
 
-```bash
-# Make sure CSV files are in the current directory
-./run_dashboard.sh
+1. **Start Services**:
 
-# Or run directly
-streamlit run kpi_dashboard.py
-```
+   ```bash
+   docker compose up -d
+   ```
+2. **Access Grafana**:
 
-### Access the Dashboard
+   - Open browser to: http://localhost:3000
+   - Login: `admin` / `admin` (change on first login)
+3. **View Dashboard**:
 
-Once running, open your browser to:
-- **Local**: http://localhost:8501
-- **Network**: http://YOUR_IP:8501
+   - Navigate to "Dashboards" → "NS3 KPI Dashboard"
+   - Or access directly: http://localhost:3000/d/ns3-kpis-dashboard
 
-### Real-Time Mode
+### Dashboard Features
 
-1. **Enable Auto-Refresh**: Check "🔄 Real-Time Auto-Refresh" in the sidebar
-2. **Set Refresh Interval**: Adjust slider (0.5-5 seconds)
-3. **Monitor Live Status**: Check "Last Update" and "Latest Data" metrics
+#### Summary Panels
 
-## Dashboard Tabs
+- **Latest Data Timestamp**: Shows when data was last received
+- **Active Cells**: Count of active cells in the last 5 minutes
+- **Active UEs**: Count of active UEs in the last 5 minutes
 
-### 1. Cell-Level (gNB)
-- View cell-level KPIs over time
-- Filter by Cell ID
-- Multiple metrics on same chart
-- Examples: PRB usage, TB counts, Mean active UEs, PDCP delay
+#### Cell-Level (gNB) Panels
 
-### 2. UE-Level
-- View per-UE KPIs
-- Filter by UE ID and Cell ID
-- Compare multiple UEs
-- Examples: Throughput, BLER, PDCP delay, PRB usage
+- **PRB Usage (DL)**: Physical Resource Block usage over time
+- **Mean Active UEs (DL)**: Average number of active UEs
+- **Transport Block Counts**: QPSK and 64QAM modulation counts
+- **PDCP Delay (DL)**: Packet delay in milliseconds
 
-### 3. Combined View
-- Latest values summary
-- Correlation analysis
-- Cross-metric comparisons
+#### UE-Level Panels
 
-### 4. Data Tables
-- View raw CSV data
-- Download filtered data
-- Export to CSV
+- **Throughput (DL)**: Per-UE downlink throughput in Mbps
+- **PRB Usage (DL)**: Per-UE resource block allocation
+- **PDCP Delay (DL)**: Per-UE packet delay
+- **Transport Block Counts**: Per-UE modulation statistics
 
-## Real-Time Features
+#### Filtering
 
-- **Live Indicator**: Shows refresh count and current time
-- **Data Freshness**: Displays time since last data update
-- **Auto-Refresh**: Continuously updates without manual refresh
-- **Countdown Timer**: Shows time until next update
+- **Cell ID**: Dropdown to filter by specific cell(s)
+- **UE ID**: Dropdown to filter by specific UE(s)
+- **Time Range**: Select time window (default: last 1 hour)
 
 ## Configuration
 
-Edit `kpi_dashboard.py` to customize:
+### InfluxDB Settings
+
+Default configuration (in `csv_to_influxdb.py`):
 
 ```python
-CSV_GNB_FILE = "gnb_kpis.csv"  # gNB CSV file path
-CSV_UE_FILE = "ue_kpis.csv"    # UE CSV file path
-AUTO_REFRESH_INTERVAL = 1      # Default refresh interval (seconds)
+INFLUXDB_URL = "http://localhost:8086"
+INFLUXDB_TOKEN = "my-super-secret-auth-token"
+INFLUXDB_ORG = "ns3-org"
+INFLUXDB_BUCKET = "ns3-kpis"
 ```
+
+To customize, set environment variables:
+
+```bash
+export INFLUXDB_URL="http://your-influxdb:8086"
+export INFLUXDB_TOKEN="your-token"
+export INFLUXDB_ORG="your-org"
+export INFLUXDB_BUCKET="your-bucket"
+```
+
+### CSV File Paths
+
+Default paths (in `csv_to_influxdb.py`):
+
+```python
+CSV_GNB_FILE = "../gnb_kpis.csv"
+CSV_UE_FILE = "../ue_kpis.csv"
+```
+
+### Grafana Dashboard
+
+Dashboard configuration is in:
+
+- `grafana/dashboards/ns3-kpis.json` - Dashboard definition
+- `grafana/provisioning/datasources/influxdb.yml` - InfluxDB connection
 
 ## Troubleshooting
 
-### No Data Showing
-- Ensure CSV files exist in the same directory as `kpi_dashboard.py`
-- Check that the simulation is running and generating data
-- Verify CSV files have proper headers
+### Verify Setup
 
-### Slow Updates
-- Reduce refresh interval in sidebar
-- Check file I/O performance
-- Consider using faster storage (SSD)
+First, run the verification script to check your setup:
 
-### Port Already in Use
 ```bash
-# Use a different port
-streamlit run kpi_dashboard.py --server.port 8502
+cd ai-dashboard
+python3 verify_setup.py
 ```
 
-## Example Use Cases
+This will check:
+- InfluxDB connection
+- Bucket existence
+- Measurements (data) in InfluxDB
+- Recent data points
+- CSV file existence
 
-1. **Monitor Simulation Progress**: Watch KPIs update in real-time as simulation runs
-2. **Debug Issues**: Identify anomalies in KPI values
-3. **Performance Analysis**: Compare metrics across cells/UEs
-4. **Data Export**: Download CSV for offline analysis
+### Dashboard Not Appearing in Grafana
 
-## Tips
+1. **Restart Grafana** to pick up the dashboard:
+   ```bash
+   docker compose restart grafana
+   ```
 
-- Use **Combined View** to see correlations between metrics
-- Filter by specific UEs/Cells to focus on relevant data
-- Download data periodically for backup
-- Adjust refresh interval based on simulation speed (faster simulation = faster refresh)
+2. **Check Dashboard File**:
+   - Verify `grafana/dashboards/ns3-kpis.json` exists
+   - Check JSON is valid: `python3 -m json.tool grafana/dashboards/ns3-kpis.json`
 
+3. **Check Grafana Logs**:
+   ```bash
+   docker compose logs grafana | grep -i dashboard
+   ```
+
+4. **Manually Import Dashboard** (if provisioning fails):
+   - In Grafana: Dashboards → Import
+   - Upload `grafana/dashboards/ns3-kpis.json`
+   - Or paste the JSON content
+
+5. **Check Provisioning**:
+   - Verify `grafana/provisioning/dashboards/default.yml` exists
+   - Check path is correct: `/var/lib/grafana/dashboards`
+
+### No Data in Grafana
+
+1. **Check InfluxDB Connection**:
+   ```bash
+   # Verify InfluxDB is running
+   docker ps | grep influxdb
+   
+   # Check InfluxDB UI
+   open http://localhost:8086
+   ```
+
+2. **Verify CSV Bridge**:
+   - Check that `csv_to_influxdb.py` is running
+   - Verify CSV files exist and are being updated
+   - Check bridge logs for errors
+   - Make sure bridge is in the `ai-dashboard` directory
+
+3. **Check Data in InfluxDB**:
+   - Access InfluxDB UI at http://localhost:8086
+   - Login: `admin` / `admin123456`
+   - Navigate to Data Explorer
+   - Query: `from(bucket: "ns3-kpis") |> range(start: -1h)`
+   - Or run: `python3 verify_setup.py`
+
+4. **Check Measurements Exist**:
+   ```bash
+   # Using verification script
+   python3 verify_setup.py
+   
+   # Or manually query InfluxDB
+   # In InfluxDB UI Data Explorer:
+   import "influxdata/influxdb/schema"
+   schema.measurements(bucket: "ns3-kpis")
+   ```
+
+### Dashboard Not Loading
+
+1. **Check Grafana Logs**:
+   ```bash
+   docker compose logs grafana
+   ```
+2. **Verify Dashboard File**:
+
+   - Check `grafana/dashboards/ns3-kpis.json` exists
+   - Verify JSON is valid
+3. **Check Datasource**:
+
+   - In Grafana: Configuration → Data Sources
+   - Verify "InfluxDB" datasource is configured
+   - Test connection
+
+### CSV Bridge Not Writing Data
+
+1. **Check InfluxDB Token**:
+
+   - Verify token matches in `csv_to_influxdb.py` and `docker-compose.yml`
+   - Default: `my-super-secret-auth-token`
+2. **Check Organization and Bucket**:
+
+   - Verify org: `ns3-org`
+   - Verify bucket: `ns3-kpis`
+3. **Check CSV File Paths**:
+
+   - Verify CSV files exist at configured paths
+   - Check file permissions
+
+## Available KPIs
+
+### Cell-Level (gNB) Metrics
+
+- `RRU_PrbUsedDl` - PRB usage (downlink)
+- `DRB_MeanActiveUeDl` - Mean active UEs
+- `TB_TotNbrDlInitial_Qpsk` - QPSK transport blocks
+- `TB_TotNbrDlInitial_64Qam` - 64QAM transport blocks
+- `DRB_PdcpSduDelayDl` - PDCP delay
+
+### UE-Level Metrics
+
+- `DRB_UEThpDl_UEID` - UE throughput (Mbps)
+- `RRU_PrbUsedDl_UEID` - UE PRB usage
+- `DRB_PdcpSduDelayDl_UEID` - UE PDCP delay
+- `TB_TotNbrDlInitial_Qpsk_UEID` - UE QPSK transport blocks
+- `TB_TotNbrDlInitial_64Qam_UEID` - UE 64QAM transport blocks
+
+## Advanced Usage
+
+### Custom Queries
+
+You can create custom panels in Grafana using Flux queries:
+
+```flux
+from(bucket: "ns3-kpis")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r["_measurement"] == "gnb_kpis")
+  |> filter(fn: (r) => r["_field"] == "RRU_PrbUsedDl")
+  |> aggregateWindow(every: 1m, fn: mean)
+```
+
+### Exporting Data
+
+1. **From Grafana**: Use panel menu → "Explore" → Export
+2. **From InfluxDB**: Use InfluxDB UI Data Explorer → Export
+3. **From CSV**: Original CSV files remain available
+
+### Performance Tuning
+
+- **Reduce Refresh Rate**: Change dashboard refresh from 5s to 10s or 30s
+- **Limit Time Range**: Use shorter time ranges for faster queries
+- **Aggregate Windows**: Use larger aggregation windows (e.g., 1m instead of 5s)
+
+## Verification
+
+After setup, verify everything is working:
+
+```bash
+cd ai-dashboard
+python3 verify_setup.py
+```
+
+This script checks:
+- InfluxDB connectivity
+- Bucket existence
+- Data measurements
+- Recent data points
+- CSV file availability
+
+## Stopping Services
+
+```bash
+# Stop containers
+docker compose down
+
+# Stop CSV bridge
+# Press Ctrl+C in the terminal running csv_to_influxdb.py
+```
+
+## Migration from Streamlit
+
+If you were using Streamlit dashboards:
+
+1. **Stop Streamlit**: No longer needed
+2. **Start Grafana**: Follow installation steps above
+3. **Data Migration**: Historical CSV data can be imported to InfluxDB if needed
+4. **Remove Streamlit**: Optional - can keep for reference
+
+## Support
+
+For issues or questions:
+
+- Check logs: `docker compose logs`
+- Verify configuration matches between bridge and InfluxDB
+- Ensure CSV files are being generated by NS3 simulation

@@ -94,6 +94,7 @@ apiVersion: 1
 datasources:
   - name: InfluxDB
     type: influxdb
+    uid: InfluxDB
     access: proxy
     url: http://influxdb:8086
     isDefault: true
@@ -131,40 +132,99 @@ echo ""
 echo "Creating sample dashboard JSON..."
 cat > grafana/dashboards/ns3-kpis.json << 'EOFDASH'
 {
-  "dashboard": {
-    "title": "NS3 KPI Dashboard",
-    "tags": ["ns3", "kpi"],
-    "timezone": "browser",
-    "panels": [
-      {
-        "id": 1,
-        "title": "gNB KPIs",
-        "type": "timeseries",
-        "targets": [
-          {
-            "query": "from(bucket: \"ns3-kpis\") |> range(start: -1h) |> filter(fn: (r) => r[\"_measurement\"] == \"gnb_kpis\")",
-            "refId": "A"
-          }
-        ],
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+  "title": "NS3 KPI Dashboard",
+  "tags": ["ns3", "kpi"],
+  "timezone": "browser",
+  "refresh": "5s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "gNB KPIs",
+      "type": "timeseries",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "InfluxDB"
       },
-      {
-        "id": 2,
-        "title": "UE KPIs",
-        "type": "timeseries",
-        "targets": [
-          {
-            "query": "from(bucket: \"ns3-kpis\") |> range(start: -1h) |> filter(fn: (r) => r[\"_measurement\"] == \"ue_kpis\")",
-            "refId": "A"
+      "targets": [
+        {
+          "query": "from(bucket: \"ns3-kpis\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"_measurement\"] == \"gnb_kpis\")",
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "InfluxDB"
           }
-        ],
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
-      }
-    ],
-    "refresh": "5s",
-    "schemaVersion": 27,
-    "version": 1
-  }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "never"
+          },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "tooltip": {"mode": "multi"},
+        "legend": {"displayMode": "list", "placement": "bottom"}
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+    },
+    {
+      "id": 2,
+      "title": "UE KPIs",
+      "type": "timeseries",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "InfluxDB"
+      },
+      "targets": [
+        {
+          "query": "from(bucket: \"ns3-kpis\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"_measurement\"] == \"ue_kpis\")",
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "InfluxDB"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "never"
+          },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "tooltip": {"mode": "multi"},
+        "legend": {"displayMode": "list", "placement": "bottom"}
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+    }
+  ],
+  "schemaVersion": 38,
+  "version": 1,
+  "uid": "ns3-kpis-dashboard"
 }
 EOFDASH
 

@@ -1,7 +1,11 @@
 #!/bin/bash
-# Install dashboard dependencies
+# Install dashboard dependencies for Grafana + InfluxDB
 
-echo "Installing KPI Dashboard dependencies..."
+echo "=========================================="
+echo "NS3 KPI Dashboard - Installation"
+echo "=========================================="
+echo ""
+echo "This installs dependencies for the Grafana dashboard solution."
 echo ""
 
 # Check if pip3 is available
@@ -26,14 +30,13 @@ else
     USER_FLAG="--user"
 fi
 
-# Install Streamlit dashboard packages
+# Install InfluxDB bridge packages (required for Grafana)
 echo ""
-echo "Installing Streamlit dashboard packages..."
-$PIP_CMD install $USER_FLAG streamlit pandas plotly watchdog
-
-echo ""
-echo "Installing InfluxDB bridge packages (optional, for Grafana)..."
-$PIP_CMD install $USER_FLAG influxdb-client
+echo "Installing InfluxDB bridge packages..."
+echo "  - influxdb-client: InfluxDB Python client"
+echo "  - pandas: CSV data processing"
+echo "  - watchdog: File system monitoring"
+$PIP_CMD install $USER_FLAG influxdb-client pandas watchdog
 
 echo ""
 echo "✅ Installation complete!"
@@ -42,16 +45,29 @@ if [ -n "$VIRTUAL_ENV" ]; then
     echo "Virtual environment: $VIRTUAL_ENV"
     echo ""
 fi
-echo "To run the Streamlit dashboard:"
-echo "  ./run_dashboard.sh"
-echo "  or"
-echo "  $PYTHON_CMD -m streamlit run kpi_dashboard_realtime.py"
-echo ""
-echo "To set up Grafana + InfluxDB:"
-echo "  ./setup_grafana.sh"
-echo "  docker compose up -d"
-echo ""
-echo "To run the CSV to InfluxDB bridge:"
-echo "  $PYTHON_CMD csv_to_influxdb.py"
-echo ""
 
+echo "=========================================="
+echo "Next Steps:"
+echo "=========================================="
+echo ""
+echo "1. Set up Grafana + InfluxDB:"
+echo "   ./setup_grafana.sh"
+echo "   docker compose up -d"
+echo ""
+echo "2. Start the CSV to InfluxDB bridge:"
+echo "   $PYTHON_CMD csv_to_influxdb.py"
+echo ""
+echo "3. Access Grafana dashboard:"
+echo "   http://localhost:3000"
+echo "   Login: admin / admin"
+echo ""
+echo "=========================================="
+echo "Optional: Streamlit Dashboard (Deprecated)"
+echo "=========================================="
+echo ""
+echo "Note: Streamlit dashboards are deprecated in favor of Grafana."
+echo "If you need Streamlit for legacy reasons, install manually:"
+echo "  $PIP_CMD install $USER_FLAG streamlit plotly"
+echo ""
+echo "See README_DASHBOARD.md for Grafana setup instructions."
+echo ""
