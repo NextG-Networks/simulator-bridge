@@ -1,4 +1,4 @@
-#!/home/hybrid/sim-bridge/simulator-bridge/ai-dashboard/dashboard_env/bin/python3
+#!/home/hybrid/proj/simulator-bridge/ai-dashboard/dashboard_env/bin/python3
 # -*- coding: utf-8 -*-
 import re
 import sys

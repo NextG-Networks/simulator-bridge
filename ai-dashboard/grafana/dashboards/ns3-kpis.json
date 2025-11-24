@@ -1,0 +1,36 @@
+{
+  "dashboard": {
+    "title": "NS3 KPI Dashboard",
+    "tags": ["ns3", "kpi"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "gNB KPIs",
+        "type": "timeseries",
+        "targets": [
+          {
+            "query": "from(bucket: \"ns3-kpis\") |> range(start: -1h) |> filter(fn: (r) => r[\"_measurement\"] == \"gnb_kpis\")",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "UE KPIs",
+        "type": "timeseries",
+        "targets": [
+          {
+            "query": "from(bucket: \"ns3-kpis\") |> range(start: -1h) |> filter(fn: (r) => r[\"_measurement\"] == \"ue_kpis\")",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      }
+    ],
+    "refresh": "5s",
+    "schemaVersion": 27,
+    "version": 1
+  }
+}

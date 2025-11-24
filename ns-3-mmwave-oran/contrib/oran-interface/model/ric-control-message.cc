@@ -38,7 +38,9 @@
 #include "ric-control-message.h"
 #include <ns3/mmwave-enb-net-device.h>
 #include <ns3/mmwave-enb-mac.h>
-
+#include <ns3/onoff-application.h>
+#include <ns3/data-rate.h>
+//#include <ns3/time.h>
 
 namespace ns3 {
 
@@ -256,10 +258,10 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
             Ptr<mmwave::MmWaveEnbMac> mac = enbDev->GetMac();
             if (mac) {
                 mac->SetMcs(mcs);
-                fprintf(stderr, "[RicControlMessage] ✅ set-mcs: node %u MCS set to %d\n", nodeId, mcs);
+                fprintf(stderr, "[RicControlMessage] set-mcs: node %u MCS set to %d\n", nodeId, mcs);
                 fflush(stderr);
             } else {
-                fprintf(stderr, "[RicControlMessage] ❌ set-mcs: node %u has no MAC layer\n", nodeId);
+                fprintf(stderr, "[RicControlMessage] set-mcs: node %u has no MAC layer\n", nodeId);
                 fflush(stderr);
             }
         });
@@ -334,8 +336,181 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
         });
         return;
     }
+    if (cmd == "set-flow-rate") {
+        uint32_t nodeId = UINT32_MAX;  // Use max as "not specified"
+        uint32_t appIndex = 0;
+        double rateMbps = 0.0;
+        // hej
+    
+        // node is optional - if not specified, we'll search all nodes
+        FindUint(json, "\"node\"", nodeId);
+        if (!FindUint(json, "\"app\"", appIndex) ||
+            !FindNumber(json, "\"rateMbps\"", rateMbps)) {
+            fprintf(stderr,
+                "[RicControlMessage] set-flow-rate requires app and rateMbps (node is optional)\n");
+            return;
+        }
+    
+        if (rateMbps <= 0.0) {
+            fprintf(stderr,
+                "[RicControlMessage] set-flow-rate: rateMbps must be > 0, got %f\n",
+                rateMbps);
+            return;
+        }
+    
+        ns3::Simulator::ScheduleNow([nodeId, appIndex, rateMbps]() {
+            using namespace ns3;
+    
+            Ptr<OnOffApplication> onoffApp = nullptr;
+            uint32_t foundNodeId = nodeId;
+            uint32_t foundAppIndex = appIndex;
+            
+            // If node is specified, try that node first
+            if (nodeId != UINT32_MAX && nodeId < NodeList::GetNNodes()) {
+                Ptr<Node> n = NodeList::GetNode(nodeId);
+                if (n) {
+                    // First try the specified app index on the specified node
+                    if (appIndex < n->GetNApplications()) {
+                        Ptr<Application> app = n->GetApplication(appIndex);
+                        onoffApp = DynamicCast<OnOffApplication>(app);
+                    }
+                    
+                    // If not found at specified index, search all applications on this node
+                    if (!onoffApp) {
+                        for (uint32_t i = 0; i < n->GetNApplications(); ++i) {
+                            Ptr<Application> app = n->GetApplication(i);
+                            Ptr<OnOffApplication> test = DynamicCast<OnOffApplication>(app);
+                            if (test) {
+                                onoffApp = test;
+                                foundAppIndex = i;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // If still not found, search all nodes for OnOffApplication
+            if (!onoffApp) {
+                fprintf(stderr, "[RicControlMessage] set-flow-rate: Searching all nodes for OnOffApplication...\n");
+                for (uint32_t nodeIdx = 0; nodeIdx < NodeList::GetNNodes(); ++nodeIdx) {
+                    Ptr<Node> testNode = NodeList::GetNode(nodeIdx);
+                    if (!testNode) continue;
+                    
+                    for (uint32_t i = 0; i < testNode->GetNApplications(); ++i) {
+                        Ptr<Application> app = testNode->GetApplication(i);
+                        Ptr<OnOffApplication> test = DynamicCast<OnOffApplication>(app);
+                        if (test) {
+                            onoffApp = test;
+                            foundNodeId = nodeIdx;
+                            foundAppIndex = i;
+                            fprintf(stderr, "[RicControlMessage] set-flow-rate: Found OnOffApplication on node %u app %u\n",
+                                    foundNodeId, foundAppIndex);
+                            fflush(stderr);
+                            break;
+                        }
+                    }
+                    if (onoffApp) break;
+                }
+            }
+            
+            if (!onoffApp) {
+                Ptr<Node> n = (nodeId != UINT32_MAX && nodeId < NodeList::GetNNodes()) 
+                              ? NodeList::GetNode(nodeId) : nullptr;
+                if (n) {
+                    fprintf(stderr,
+                        "[RicControlMessage] set-flow-rate: node %u has no OnOffApplication (total apps: %u). Available apps:\n",
+                        nodeId, n->GetNApplications());
+                    for (uint32_t i = 0; i < n->GetNApplications(); ++i) {
+                        Ptr<Application> app = n->GetApplication(i);
+                        fprintf(stderr, "  app[%u]: %s\n", i, app->GetInstanceTypeId().GetName().c_str());
+                    }
+                }
+                fprintf(stderr, "[RicControlMessage] set-flow-rate: Searched all %u nodes, no OnOffApplication found.\n",
+                        NodeList::GetNNodes());
+                fflush(stderr);
+                return;
+            }
+    
+            // Set DataRate attribute for OnOffApplication
+            // Format: "50Mbps" as a string
+            std::ostringstream rateStr;
+            rateStr << std::fixed << std::setprecision(2) << rateMbps << "Mbps";
+            DataRate dataRate(rateStr.str());
+            
+            onoffApp->SetAttribute("DataRate", DataRateValue(dataRate));
+            fprintf(stderr,
+                "[RicControlMessage] set-flow-rate: node %u app %u rate set to %.2f Mbps",
+                foundNodeId, foundAppIndex, rateMbps);
+            if (foundNodeId != nodeId && nodeId != UINT32_MAX) {
+                fprintf(stderr, " (searched node %u, found on node %u)", nodeId, foundNodeId);
+            }
+            fprintf(stderr, "\n");
+            fflush(stderr);
+        });
+        return;
+    }
 
-    fprintf(stderr, "[RicControlMessage] ❌ Unknown cmd='%s' (valid commands: move-enb, stop, set-mcs, set-bandwidth)\n", cmd.c_str());
+
+    if (cmd == "set-enb-txpower") {
+        uint32_t nodeId = 0;
+        double txPowerDbm = 0.0;
+
+        if (!FindUint(json, "\"node\"", nodeId) ||
+            !FindNumber(json, "\"txPowerDbm\"", txPowerDbm)) {
+            fprintf(stderr,
+                "[RicControlMessage] set-enb-txpower requires node and txPowerDbm\n");
+            return;
+        }
+
+        ns3::Simulator::ScheduleNow([nodeId, txPowerDbm]() {
+            using namespace ns3;
+
+            if (nodeId >= NodeList::GetNNodes()) {
+                fprintf(stderr,
+                    "[RicControlMessage] set-enb-txpower: node %u does not exist\n",
+                    nodeId);
+                return;
+            }
+
+            Ptr<Node> n = NodeList::GetNode(nodeId);
+            if (!n) {
+                fprintf(stderr,
+                    "[RicControlMessage] set-enb-txpower: node %u not found\n",
+                    nodeId);
+                return;
+            }
+
+            Ptr<mmwave::MmWaveEnbNetDevice> enbDev;
+            for (uint32_t i = 0; i < n->GetNDevices(); ++i) {
+                enbDev = n->GetDevice(i)->GetObject<mmwave::MmWaveEnbNetDevice>();
+                if (enbDev) break;
+            }
+
+            if (!enbDev) {
+                fprintf(stderr,
+                    "[RicControlMessage] set-enb-txpower: node %u has no MmWaveEnbNetDevice\n",
+                    nodeId);
+                return;
+            }
+
+            Ptr<mmwave::MmWaveEnbPhy> phy = enbDev->GetPhy();
+            if (!phy) {
+                fprintf(stderr,
+                    "[RicControlMessage] set-enb-txpower: node %u has no PHY\n",
+                    nodeId);
+                return;
+            }
+
+            phy->SetTxPower(txPowerDbm);
+            fprintf(stderr,
+                "[RicControlMessage] set-enb-txpower: node %u TxPower set to %.2f dBm\n",
+                nodeId, txPowerDbm);
+        });
+        return;
+    }
+
+    fprintf(stderr, "[RicControlMessage] Unknown cmd='%s' (valid commands: move-enb, stop, set-mcs, set-bandwidth)\n", cmd.c_str());
     fflush(stderr);
 }
 

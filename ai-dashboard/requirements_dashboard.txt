@@ -1,0 +1,9 @@
+# Streamlit Dashboard Requirements
+streamlit>=1.28.0
+pandas>=2.0.0
+plotly>=5.17.0
+watchdog>=3.0.0
+
+# InfluxDB Bridge Requirements (optional, for Grafana)
+influxdb-client>=1.38.0
+

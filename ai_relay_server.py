@@ -15,6 +15,8 @@ import threading
 import time
 import sys
 import os
+import csv
+from datetime import datetime
 
 # Configuration
 XAPP_LISTEN_HOST = "0.0.0.0"
@@ -33,6 +35,179 @@ MAX_FRAME = 1024 * 1024  # 1MB max frame size
 xapp_connections = {}  # {addr: conn} - connections from xApp
 ai_connection = None  # Connection to external AI server
 connections_lock = threading.Lock()
+
+# CSV output files
+CSV_GNB_FILE = "gnb_kpis.csv"
+CSV_UE_FILE = "ue_kpis.csv"
+
+# CSV writers and file handles
+gnb_csv_file = None
+ue_csv_file = None
+gnb_csv_writer = None
+ue_csv_writer = None
+gnb_fieldnames = None
+ue_fieldnames = None
+
+def get_measurement_label(name):
+    """Convert measurement name to human-readable label"""
+    # Simple sanitization - can be enhanced with full mapping from ai_dummy_server if needed
+    return name.replace(".", "_").replace(" ", "_")
+
+def init_csv_files():
+    """Initialize CSV files with headers"""
+    global gnb_csv_file, ue_csv_file, gnb_csv_writer, ue_csv_writer, gnb_fieldnames, ue_fieldnames
+    
+    # Initialize gNB CSV
+    file_exists = os.path.exists(CSV_GNB_FILE)
+    if file_exists:
+        with open(CSV_GNB_FILE, 'r') as f:
+            reader = csv.DictReader(f)
+            gnb_fieldnames = reader.fieldnames or ['timestamp', 'meid', 'cell_id', 'format']
+    else:
+        gnb_fieldnames = ['timestamp', 'meid', 'cell_id', 'format']
+    
+    gnb_csv_file = open(CSV_GNB_FILE, 'a', newline='')
+    gnb_csv_writer = csv.DictWriter(gnb_csv_file, fieldnames=gnb_fieldnames, extrasaction='ignore')
+    if not file_exists:
+        gnb_csv_writer.writeheader()
+    
+    # Initialize UE CSV
+    file_exists = os.path.exists(CSV_UE_FILE)
+    if file_exists:
+        with open(CSV_UE_FILE, 'r') as f:
+            reader = csv.DictReader(f)
+            ue_fieldnames = reader.fieldnames or ['timestamp', 'meid', 'cell_id', 'ue_id']
+    else:
+        ue_fieldnames = ['timestamp', 'meid', 'cell_id', 'ue_id']
+    
+    ue_csv_file = open(CSV_UE_FILE, 'a', newline='')
+    ue_csv_writer = csv.DictWriter(ue_csv_file, fieldnames=ue_fieldnames, extrasaction='ignore')
+    if not file_exists:
+        ue_csv_writer.writeheader()
+    
+    print(f"[RELAY] CSV logging enabled: {CSV_GNB_FILE}, {CSV_UE_FILE}")
+
+def close_csv_files():
+    """Close CSV files"""
+    global gnb_csv_file, ue_csv_file
+    if gnb_csv_file:
+        gnb_csv_file.close()
+    if ue_csv_file:
+        ue_csv_file.close()
+
+def write_gnb_csv(timestamp, meid, cell_id, format_type, measurements):
+    """Write gNB (cell-level) measurements to CSV"""
+    global gnb_csv_writer, gnb_fieldnames, gnb_csv_file
+    
+    if not gnb_csv_writer:
+        return
+    
+    row = {
+        'timestamp': timestamp,
+        'meid': meid,
+        'cell_id': cell_id,
+        'format': format_type
+    }
+    
+    for meas in measurements:
+        name = meas.get("name", f"id_{meas.get('id', 'unknown')}")
+        value = meas.get("value", "")
+        csv_name = get_measurement_label(name)
+        row[csv_name] = value
+        
+        if csv_name not in gnb_fieldnames:
+            gnb_fieldnames.append(csv_name)
+            gnb_csv_file.close()
+            existing_data = []
+            if os.path.exists(CSV_GNB_FILE):
+                with open(CSV_GNB_FILE, 'r') as f:
+                    reader = csv.DictReader(f)
+                    existing_data = list(reader)
+            gnb_csv_file = open(CSV_GNB_FILE, 'w', newline='')
+            gnb_csv_writer = csv.DictWriter(gnb_csv_file, fieldnames=gnb_fieldnames, extrasaction='ignore')
+            gnb_csv_writer.writeheader()
+            for old_row in existing_data:
+                gnb_csv_writer.writerow(old_row)
+            gnb_csv_file.close()
+            gnb_csv_file = open(CSV_GNB_FILE, 'a', newline='')
+            gnb_csv_writer = csv.DictWriter(gnb_csv_file, fieldnames=gnb_fieldnames, extrasaction='ignore')
+    
+    gnb_csv_writer.writerow(row)
+    gnb_csv_file.flush()
+
+def write_ue_csv(timestamp, meid, cell_id, ue_id, measurements):
+    """Write UE measurements to CSV"""
+    global ue_csv_writer, ue_fieldnames, ue_csv_file
+    
+    if not ue_csv_writer:
+        return
+    
+    row = {
+        'timestamp': timestamp,
+        'meid': meid,
+        'cell_id': cell_id,
+        'ue_id': ue_id
+    }
+    
+    for meas in measurements:
+        name = meas.get("name", f"id_{meas.get('id', 'unknown')}")
+        value = meas.get("value", "")
+        csv_name = get_measurement_label(name)
+        row[csv_name] = value
+        
+        if csv_name not in ue_fieldnames:
+            ue_fieldnames.append(csv_name)
+            ue_csv_file.close()
+            existing_data = []
+            if os.path.exists(CSV_UE_FILE):
+                with open(CSV_UE_FILE, 'r') as f:
+                    reader = csv.DictReader(f)
+                    existing_data = list(reader)
+            ue_csv_file = open(CSV_UE_FILE, 'w', newline='')
+            ue_csv_writer = csv.DictWriter(ue_csv_file, fieldnames=ue_fieldnames, extrasaction='ignore')
+            ue_csv_writer.writeheader()
+            for old_row in existing_data:
+                ue_csv_writer.writerow(old_row)
+            ue_csv_file.close()
+            ue_csv_file = open(CSV_UE_FILE, 'a', newline='')
+            ue_csv_writer = csv.DictWriter(ue_csv_file, fieldnames=ue_fieldnames, extrasaction='ignore')
+    
+    ue_csv_writer.writerow(row)
+    ue_csv_file.flush()
+
+def process_kpi_for_csv(msg):
+    """Process KPI message and write to CSV files"""
+    try:
+        kpi = msg.get("kpi", {})
+        if not kpi:
+            return
+        
+        meid = msg.get("meid", "unknown")
+        timestamp = int(datetime.now().timestamp() * 1000)  # Milliseconds timestamp
+        
+        # Extract cell ID
+        cell_id = kpi.get("cellObjectID", "N/A")
+        format_type = kpi.get("format", "unknown")
+        
+        # Get measurements and UEs
+        measurements = kpi.get("measurements", [])
+        ues = kpi.get("ues", [])
+        
+        # Filter non-zero measurements
+        non_zero_measurements = [m for m in measurements if m.get("value", 0) != 0]
+        
+        # Write gNB (cell-level) measurements
+        if non_zero_measurements:
+            write_gnb_csv(timestamp, meid, cell_id, format_type, non_zero_measurements)
+        
+        # Write UE measurements (one row per UE)
+        for ue in ues:
+            ue_id = ue.get("ueId", "N/A")
+            ue_measurements = [m for m in ue.get("measurements", []) if m.get("value", 0) != 0]
+            if ue_measurements:
+                write_ue_csv(timestamp, meid, cell_id, ue_id, ue_measurements)
+    except Exception as e:
+        print(f"[RELAY] Error processing KPI for CSV: {e}")
 
 def recv_framed(conn):
     """Receive a length-prefixed frame from connection"""
@@ -172,6 +347,9 @@ def handle_xapp_connection(conn, addr):
                 print(f"[RELAY] ← Received from xApp {addr}: type={msg_type}, size={len(text)} bytes")
                 
                 if msg_type == "kpi":
+                    # Write KPI to CSV files
+                    process_kpi_for_csv(msg)
+                    
                     # Forward KPI to external AI
                     meid = msg.get("meid", "unknown")
                     print(f"[RELAY] → Forwarding KPI to external AI: meid={meid}")
@@ -345,6 +523,9 @@ def main():
     print(f"[RELAY] Starting relay server...")
     print(f"[RELAY]")
     
+    # Initialize CSV files
+    init_csv_files()
+    
     # Start command interface server in background
     threading.Thread(target=command_interface_server, daemon=True).start()
     
@@ -368,10 +549,12 @@ def main():
                 
     except KeyboardInterrupt:
         print("\n[RELAY] Shutting down...")
+        close_csv_files()
     except Exception as e:
         print(f"[RELAY] ❌ Server error: {e}")
         import traceback
         traceback.print_exc()
+        close_csv_files()
 
 if __name__ == "__main__":
     main()

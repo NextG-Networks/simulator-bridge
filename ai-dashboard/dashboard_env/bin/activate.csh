@@ -9,7 +9,7 @@ alias deactivate 'test $?_OLD_VIRTUAL_PATH != 0 && setenv PATH "$_OLD_VIRTUAL_PA
 # Unset irrelevant variables.
 deactivate nondestructive
 
-setenv VIRTUAL_ENV /home/hybrid/sim-bridge/simulator-bridge/ai-dashboard/dashboard_env
+setenv VIRTUAL_ENV /home/hybrid/proj/simulator-bridge/ai-dashboard/dashboard_env
 
 set _OLD_VIRTUAL_PATH="$PATH"
 setenv PATH "$VIRTUAL_ENV/"bin":$PATH"
