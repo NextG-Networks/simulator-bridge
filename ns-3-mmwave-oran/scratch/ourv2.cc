@@ -16,7 +16,9 @@
 #include "ns3/packet-sink.h"
 #include "ns3/netanim-module.h"
 #include "ns3/waypoint-mobility-model.h"
+#include "ns3/waypoint-mobility-model.h"
 #include "ns3/buildings-module.h"
+#include "ns3/buildings-helper.h" // Add this
 
 #include "ns3/mmwave-component-carrier-enb.h"  // Add this
 #include "ns3/mmwave-flex-tti-mac-scheduler.h" // Add this
@@ -67,15 +69,16 @@ static GlobalValue g_reducedPmValues ("reducedPmValues", "If true, use a subset 
 
 
  
-// ---------------- Timeseries sampler (drop-in) ----------------
-struct SamplerState {
+// ---------------- Timeseries sampler (drop-in)// Global variables
+struct GlobalState {
+  double lastT = 0.0;
   uint64_t lastBytes = 0;
-  double   lastT     = 0.0;
-  double   ewma      = 0.0;
-  double   lastPingMs = 0.0;
-  bool     seenPing   = false;
-};
-static SamplerState gS;
+  double ewma = 0.0;
+  bool seenPing = false;
+  double lastPingMs = 0.0;
+} gS;
+
+AnimationInterface *g_anim = nullptr; // Global pointer for NetAnim updates
 
 static void PingRttCallback(Time rtt) {
   gS.lastPingMs = rtt.GetMilliSeconds();
@@ -148,9 +151,10 @@ static void SampleAll(const NodeContainer &ueNodes,
   const double alpha = 1.0 - std::exp(-(periodSec / tau));
   gS.ewma = alpha * mbps + (1.0 - alpha) * gS.ewma;
 
-  //
   double pingMs = gS.seenPing ? gS.lastPingMs : 0.0;
-  // Get MCS values from scheduler
+
+
+
   // Get MCS values from scheduler
   uint8_t mcsDl = 255;  // 255 = adaptive/not fixed
   uint8_t mcsUl = 255;
@@ -187,6 +191,13 @@ static void SampleAll(const NodeContainer &ueNodes,
     << "\n";
   f.flush();
 
+  // Update NetAnim description with throughput
+  if (g_anim) {
+      std::ostringstream oss;
+      oss << "UE0 (" << std::fixed << std::setprecision(1) << mbps << " Mbps)";
+      g_anim->UpdateNodeDescription(ueNodes.Get(0), oss.str());
+  }
+
   Simulator::Schedule(Seconds(periodSec), &SampleAll,
                       ueNodes, ueDevs, gnbNode, covRadius, sink0, periodSec);
 }
@@ -218,15 +229,130 @@ static void SamplePositions(NodeContainer ueNodes,
   Simulator::Schedule(Seconds(periodSec), &SamplePositions, ueNodes, ueDevs, gnbNode, periodSec);
 }
 
+// ---------------- Dynamic MCS Logic ----------------
+// Sets the MCS value for the scheduler leaves the mcs as the chosen value for 10 seconds
+// Unless the value have been changed then leave it an extra 5 seconds
+// This is to prevent the scheduler from changing the MCS value if the AI just changed it
+static void ChangeMcs(Ptr<Node> gnb, int mcs)
+{
+  Ptr<mmwave::MmWaveEnbNetDevice> enbDev = gnb->GetDevice(0)->GetObject<mmwave::MmWaveEnbNetDevice>();
+  if (!enbDev) return;
+
+  std::map<uint8_t, Ptr<mmwave::MmWaveComponentCarrier>> ccMap = enbDev->GetCcMap();
+  if (ccMap.empty()) return;
+
+  Ptr<mmwave::MmWaveComponentCarrierEnb> cc = DynamicCast<mmwave::MmWaveComponentCarrierEnb>(ccMap.at(0));
+  if (!cc) return;
+
+  Ptr<mmwave::MmWaveMacScheduler> sched = cc->GetMacScheduler();
+  if (!sched) return;
+
+  // We need to cast to MmWaveFlexTtiMacScheduler to access attributes
+  Ptr<mmwave::MmWaveFlexTtiMacScheduler> flexSched = DynamicCast<mmwave::MmWaveFlexTtiMacScheduler>(sched);
+  if (flexSched) {
+    if (mcs >= 0) {
+      flexSched->SetAttribute("FixedMcsDl", BooleanValue(true));
+      flexSched->SetAttribute("McsDefaultDl", UintegerValue(mcs));
+      flexSched->SetAttribute("FixedMcsUl", BooleanValue(true));
+      flexSched->SetAttribute("McsDefaultUl", UintegerValue(mcs));
+      NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [Scenario] Setting Fixed MCS to " << mcs);
+    } else {
+      flexSched->SetAttribute("FixedMcsDl", BooleanValue(false));
+      flexSched->SetAttribute("FixedMcsUl", BooleanValue(false));
+      NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [Scenario] Restoring Adaptive MCS");
+    }
+  }
+}
+
+static int GetCurrentMcs(Ptr<Node> gnb)
+{
+  Ptr<mmwave::MmWaveEnbNetDevice> enbDev = gnb->GetDevice(0)->GetObject<mmwave::MmWaveEnbNetDevice>();
+  if (!enbDev) return -1;
+
+  std::map<uint8_t, Ptr<mmwave::MmWaveComponentCarrier>> ccMap = enbDev->GetCcMap();
+  if (ccMap.empty()) return -1;
+
+  Ptr<mmwave::MmWaveComponentCarrierEnb> cc = DynamicCast<mmwave::MmWaveComponentCarrierEnb>(ccMap.at(0));
+  if (!cc) return -1;
+
+  Ptr<mmwave::MmWaveMacScheduler> sched = cc->GetMacScheduler();
+  if (!sched) return -1;
+
+  Ptr<mmwave::MmWaveFlexTtiMacScheduler> flexSched = DynamicCast<mmwave::MmWaveFlexTtiMacScheduler>(sched);
+  if (flexSched) {
+    return flexSched->GetCurrentMcsDl();
+  }
+  return -1;
+}
+
+static void ScheduleNextMcsEvent(Ptr<Node> gnb, bool nextIsLow)
+{
+  if (nextIsLow) {
+    // --- Low Phase ---
+    // Target: Random MCS between 4 and 9 (very low)
+    int targetMcs = 4 + (rand() % 6); 
+    ChangeMcs(gnb, targetMcs);
+    
+    // Duration: 10 seconds
+    double duration = 10.0;
+    
+    Simulator::Schedule(Seconds(duration), [gnb, targetMcs]() {
+      // Check for AI intervention
+      int currentMcs = GetCurrentMcs(gnb);
+      if (currentMcs != -1 && currentMcs != targetMcs) {
+        NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [Scenario] AI intervention detected (MCS=" << currentMcs << " != " << targetMcs << "). Extending window by 5s.");
+        Simulator::Schedule(Seconds(5.0), [gnb]() {
+          ScheduleNextMcsEvent(gnb, false); // Go to Random Phase
+        });
+      } else {
+        ScheduleNextMcsEvent(gnb, false); // Go to Random Phase
+      }
+    });
+  } else {
+    // --- Random Phase ---
+    // Target: Random MCS between 1 and 28
+    int targetMcs = 1 + (rand() % 28);
+    ChangeMcs(gnb, targetMcs);
+    
+    // Duration: 10 seconds
+    double duration = 10.0;
+    
+    Simulator::Schedule(Seconds(duration), [gnb, targetMcs]() {
+      // Check for AI intervention
+      int currentMcs = GetCurrentMcs(gnb);
+      if (currentMcs != -1 && currentMcs != targetMcs) {
+        NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [Scenario] AI intervention detected (MCS=" << currentMcs << " != " << targetMcs << "). Extending window by 5s.");
+        Simulator::Schedule(Seconds(5.0), [gnb]() {
+          ScheduleNextMcsEvent(gnb, true); // Go to Low Phase
+        });
+      } else {
+        ScheduleNextMcsEvent(gnb, true); // Go to Low Phase
+      }
+    });
+  }
+}
+
 // ---------------- main ----------------
 int main (int argc, char** argv)
 {
   // Enable logging for E2 components (like scenario-zero.cc)
-  LogComponentEnableAll (LOG_PREFIX_ALL);
-  LogComponentEnable ("RicControlMessage", LOG_LEVEL_ALL);
-  LogComponentEnable ("E2Termination", LOG_LEVEL_LOGIC);
+  // LogComponentEnableAll (LOG_PREFIX_ALL);
+  // LogComponentEnable ("RicControlMessage", LOG_LEVEL_ALL);
+  // LogComponentEnable ("E2Termination", LOG_LEVEL_LOGIC);
 
-  CommandLine cmd; cmd.Parse(argc, argv);
+  CommandLine cmd;
+  int rngSeed = 0;
+  cmd.AddValue("rngSeed", "Seed for random number generator (default 0 = random)", rngSeed);
+  cmd.Parse(argc, argv);
+
+  // Initialize random seed
+  if (rngSeed == 0) {
+    srand(time(NULL));
+    NS_LOG_UNCOND("RNG Seed: Random (time-based)");
+  } else {
+    srand(rngSeed);
+    NS_LOG_UNCOND("RNG Seed: Fixed (" << rngSeed << ")");
+  }
 
   // Read flags
   DoubleValue simV; GlobalValue::GetValueByName("simTime", simV);
@@ -348,16 +474,17 @@ Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::HarqEnabled",
                    BooleanValue(true));
 
 // Start with AMC (no fixed MCS)
+// Start with Fixed MCS 28 (High Throughput)
 Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::FixedMcsDl",
-                   BooleanValue(false));
+                   BooleanValue(true));
 Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::FixedMcsUl",
-                   BooleanValue(false));
+                   BooleanValue(true));
 
 // Default values that DoSchedSetMcs will override anyway
 Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::McsDefaultDl",
-                   UintegerValue(10));
+                   UintegerValue(28));
 Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::McsDefaultUl",
-                   UintegerValue(10));
+                   UintegerValue(28));
 
 // Optional: DL-only / UL-only for debugging
 Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::DlSchedOnly",
@@ -394,13 +521,19 @@ Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::SymPerSlot",
   Ptr<MmWavePointToPointEpcHelper> epc = CreateObject<MmWavePointToPointEpcHelper>();
   mmw->SetEpcHelper(epc);
 
+// ------------------- BUILDING  SIZE ---------------------------------
   // Add a building in the way the signal to the UE
-  Ptr<Building> b = CreateObject<Building> ();
-  b->SetBoundaries (Box (80.0, 85.0,     
-                         0.0, 30.0,     
-                         0.0, 20.0));    
-  b->SetBuildingType (Building::Residential);
-  b->SetExtWallsType (Building::ConcreteWithWindows); 
+  // Ptr<Building> b = CreateObject<Building> ();
+  // b->SetBoundaries (Box (80.0, 90.0,     
+  //                        0.0, 100.0,     
+  //                        0.0, 20.0));    
+  // b->SetBuildingType (Building::Residential);
+  // b->SetExtWallsType (Building::ConcreteWithWindows); 
+
+// ------------------- BUILDING  PATHLOSS -----------------------------
+  // mmw->SetPathlossModelType("ns3::HybridBuildingsPropagationLossModel");
+  // mmw->SetChannelConditionModelType("ns3::BuildingsChannelConditionModel");
+// --------------------------------------------------------------------
 
   mmw->SetPathlossModelType("ns3::ThreeGppUmiStreetCanyonPropagationLossModel");
   mmw->SetChannelConditionModelType("ns3::ThreeGppUmiStreetCanyonChannelConditionModel");
@@ -411,6 +544,7 @@ Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::SymPerSlot",
   NodeContainer gnb; gnb.Create(1);
   NodeContainer ue;  ue.Create(1);
   NodeContainer rh;  rh.Create(1);
+  NodeContainer buildingNode; buildingNode.Create(1); // Dummy node for building visualization
 
   // Internet stacks
   InternetStackHelper ip; ip.Install(ue); ip.Install(rh);
@@ -425,58 +559,64 @@ Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::SymPerSlot",
     m.SetMobilityModel("ns3::ConstantPositionMobilityModel");
     m.Install(gnb);
 
-    // MobilityHelper uem;
-    // auto uePos = CreateObject<ListPositionAllocator>();
-    // uePos->Add(Vector(50,25,1.5));
-    // uem.SetPositionAllocator(uePos);
+    // ------------------- BUILDING POSITION -----------------------------    
+    // Install mobility for building node (static at center of building)
+    // MobilityHelper buildingMobility;
+    // auto buildingPos = CreateObject<ListPositionAllocator>();
+    // buildingPos->Add(Vector(85.0, 50.0, 0.0)); // Center of X=[80,90], Y=[0,100]
+    // buildingMobility.SetPositionAllocator(buildingPos);
+    // buildingMobility.SetMobilityModel("ns3::ConstantPositionMobilityModel");
+    // buildingMobility.Install(buildingNode);
+    // --------------------------------------------------------------------
+  }
 
-    // Ptr<UniformRandomVariable> speed = CreateObject<UniformRandomVariable>();
-    // speed->SetAttribute("Min", DoubleValue(0.5));
-    // speed->SetAttribute("Max", DoubleValue(2.0));
-
-    // uem.SetMobilityModel("ns3::RandomWalk2dMobilityModel",
-    //                      "Mode",   StringValue("Time"),
-    //                      "Time",   TimeValue(Seconds(1.0)),
-    //                      "Speed",  PointerValue(speed),
-    //                      "Bounds", RectangleValue(Rectangle(-120,120,-120,120)));
-    // uem.Install(ue);
-
-    MobilityHelper uem;
+  // ------------------- UE MOBILITY -----------------------------
+  MobilityHelper uem;
     uem.SetMobilityModel("ns3::WaypointMobilityModel");
     uem.Install(ue);
 
     Ptr<WaypointMobilityModel> ueMobility = ue.Get(0)->GetObject<WaypointMobilityModel>();
 
+
     double t_cycle = 0.0;
     double cycle_duration = 50.0;
 
-    Vector p_start(25, 25, 1.5);
-    Vector p_leg1(75, 25, 1.5);
-    Vector p_leg2(75, 45, 1.5);
-    Vector p_leg3(200, 25, 1.5);
+    Vector p_start(30, 25, 1.5);    // Close to gNB (LOS)
+    Vector p_wall_front(70, 25, 1.5); // Just before building
+    Vector p_wall_back(95, 25, 1.5);  // Behind building (NLOS/Penetration)
+    Vector p_far_corner(95, 110, 1.5); // Far corner (Shadowed)
+    Vector p_clear(50, 110, 1.5);      // Clear of building (LOS)
+
+    // 0s: Start (Initial position)
+    ueMobility->AddWaypoint(Waypoint(Seconds(0.0), p_start));
 
     while (t_cycle < simTime) {
-        // Start of cycle (or return point)
-        ueMobility->AddWaypoint(Waypoint(Seconds(t_cycle + 0.0), p_start));
+        // Note: The start point for the current cycle is already added 
+        // (either by initialization or by the end of the previous cycle).
         
-        // 1. Walk Away (x) for 5s
+        // 10s: Approach wall
         if (t_cycle + 10.0 > simTime) break;
-        ueMobility->AddWaypoint(Waypoint(Seconds(t_cycle + 10.0), p_leg1));
+        ueMobility->AddWaypoint(Waypoint(Seconds(t_cycle + 10.0), p_wall_front));
 
-        // 2. Walk Up (y) for 2s
-        if (t_cycle + 12.0 > simTime) break;
-        ueMobility->AddWaypoint(Waypoint(Seconds(t_cycle + 12.0), p_leg2));
+        // 20s: Go through/behind wall -> Drop in throughput
+        if (t_cycle + 20.0 > simTime) break;
+        ueMobility->AddWaypoint(Waypoint(Seconds(t_cycle + 20.0), p_wall_back));
 
-        // 3. Down Away (down y, away x) for 2s
-        if (t_cycle + 14.0 > simTime) break;
-        ueMobility->AddWaypoint(Waypoint(Seconds(t_cycle + 14.0), p_leg3));
-        // 4. Back to Start for 6s
-        // (The next loop iteration adds p_start at t_cycle + 15, completing the motion)
+        // 30s: Move along back -> Low throughput
+        if (t_cycle + 30.0 > simTime) break;
+        ueMobility->AddWaypoint(Waypoint(Seconds(t_cycle + 30.0), p_far_corner));
+
+        // 40s: Move clear -> Recovery
+        if (t_cycle + 40.0 > simTime) break;
+        ueMobility->AddWaypoint(Waypoint(Seconds(t_cycle + 40.0), p_clear));
+
+        // 50s: Return to start (closes the loop and sets start for next cycle)
+        if (t_cycle + 50.0 <= simTime) {
+             ueMobility->AddWaypoint(Waypoint(Seconds(t_cycle + 50.0), p_start));
+        }
         
         t_cycle += cycle_duration;
     }
-
-  }
 
   // Core + RH “fixed” positions (optional)
   {
@@ -489,7 +629,13 @@ Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::SymPerSlot",
     corePositions->Add(Vector(20.0,20.0,0.0));
     coreMobility.SetPositionAllocator(corePositions);
     coreMobility.Install(stationaryCoreNodes);
+    coreMobility.SetPositionAllocator(corePositions);
+    coreMobility.Install(stationaryCoreNodes);
   }
+
+  // Install BuildingsHelper to enable building-aware mobility/channel
+  BuildingsHelper::Install(gnb);
+  BuildingsHelper::Install(ue);
 
   // Devices
   NetDeviceContainer gnbDevs = mmw->InstallEnbDevice(gnb);
@@ -520,7 +666,7 @@ Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::SymPerSlot",
   srh.GetStaticRouting(rh.Get(0)->GetObject<Ipv4>())
      ->AddNetworkRouteTo(Ipv4Address("7.0.0.0"), Ipv4Mask("255.0.0.0"), 1);
 
-  // ------------- Traffic for throughput & ping (like your first file) -------------
+  // ------------- Traffic for throughput & ping  -------------
   const uint16_t cbrPort = 4000;
   PacketSinkHelper sink("ns3::UdpSocketFactory", InetSocketAddress(Ipv4Address::GetAny(), cbrPort));
   ApplicationContainer sinkApps = sink.Install(ue.Get(0));
@@ -564,22 +710,31 @@ Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::SymPerSlot",
          << " " << ep.x << " " << ep.y << "\n";
   }
 
+
   // Timestamped NetAnim file
-  
-  
   std::time_t t = std::time(nullptr);
   std::tm tm = *std::localtime(&t);
   char time_buffer[80];
   std::strftime(time_buffer, sizeof(time_buffer), "%Y-%m-%d_%H-%M-%S", &tm);
   std::string filename = std::string("NetAnimFile_") + time_buffer + ".xml";
   AnimationInterface anim(filename.c_str());
+  g_anim = &anim; // Assign global pointer
 
+  anim.SetMobilityPollInterval(Seconds(1)); // Sample movement every 1 second
+  anim.SkipPacketTracing(); // Disable packet tracing to reduce file size
 
+  // // Configure building visualization
+  // uint32_t buildingImgId = anim.AddResource("/home/hybrid/proj/ns-3-mmwave-oran/scratch/building.png");
+  // anim.UpdateNodeImage(buildingNode.Get(0)->GetId(), buildingImgId);
+  // anim.UpdateNodeDescription(buildingNode.Get(0), "Building");
+  // anim.UpdateNodeSize(buildingNode.Get(0), 10.0, 100.0); // Width=10, Height=100
+  
+  // Start the alternating MCS loop (Low -> Random -> Low...)
+  // First 5 seconds are Fixed MCS 28 (set by default)
+  Simulator::Schedule(Seconds(5.0), &ScheduleNextMcsEvent, gnb.Get(0), true);
 
-  NS_LOG_UNCOND("is this visible?");
   Simulator::Stop(Seconds(simTime));
   Simulator::Run();
-  NS_LOG_UNCOND("Simulation finished.");
   Simulator::Destroy();
   return 0;
 }

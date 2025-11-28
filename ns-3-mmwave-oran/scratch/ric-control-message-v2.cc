@@ -22,7 +22,7 @@
  *		   Michele Polese <michele.polese@gmail.com>
  */
  
-#include <ns3/ric-control-message.h>
+#include "ric-control-message-v2.h"
 #include <ns3/asn1c-types.h>
 #include <ns3/log.h>
 #include <bitset>
@@ -34,17 +34,17 @@
 #include "ns3/simulator.h"
 #include "ns3/vector.h"
 
-#include "control-gateway.h"
-#include "ric-control-message.h"
+// #include "control-gateway.h" // Might not be needed for V2 standalone
 #include <ns3/mmwave-enb-net-device.h>
 #include <ns3/mmwave-enb-mac.h>
 #include <ns3/onoff-application.h>
 #include <ns3/data-rate.h>
-//#include <ns3/time.h>
+#include <ns3/mmwave-flex-tti-mac-scheduler.h>
+#include <ns3/lte-enb-rrc.h>
 
 namespace ns3 {
 
-NS_LOG_COMPONENT_DEFINE ("RicControlMessage");
+NS_LOG_COMPONENT_DEFINE ("RicControlMessageV2");
 
 
 // Very small parser helpers
@@ -86,7 +86,7 @@ static bool FindString(const std::string& s, const char* key, std::string& out)
 
 // Command executor: supports {"cmd":"move-enb","node":<id>,"x":<X>,"y":<Y>}
 void
-RicControlMessage::ApplySimpleCommand(const std::string& json)
+RicControlMessageV2::ApplySimpleCommand(const std::string& json)
 {
     // --- tiny field extractors (no JSON lib needed) ---
     auto FindNumber = [](const std::string& s, const char* key, double& outVal) -> bool {
@@ -118,29 +118,131 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
         return true;
     };
 
-    fprintf(stderr, "[RicControlMessage] ApplySimpleCommand: Input JSON = '%s' (len=%zu)\n", json.c_str(), json.size());
+    fprintf(stderr, "[RicControlMessageV2] ApplySimpleCommand: Input JSON = '%s' (len=%zu)\n", json.c_str(), json.size());
     fflush(stderr);
     
     std::string cmd;
     if (!FindString(json, "\"cmd\"", cmd)) {
-        fprintf(stderr, "[RicControlMessage] ERROR: No 'cmd' found in control JSON: '%s'\n", json.c_str());
+        fprintf(stderr, "[RicControlMessageV2] ERROR: No 'cmd' found in control JSON: '%s'\n", json.c_str());
         fflush(stderr);
         return;
     }
     
-    fprintf(stderr, "[RicControlMessage] Extracted cmd = '%s'\n", cmd.c_str());
+    fprintf(stderr, "[RicControlMessageV2] Extracted cmd = '%s'\n", cmd.c_str());
     fflush(stderr);
 
     
 
     if (cmd == "stop") {
         ns3::Simulator::ScheduleNow([]() {
-            fprintf(stderr, "[RicControlMessage] stop: Stopping simulator now\n");
+            fprintf(stderr, "[RicControlMessageV2] stop: Stopping simulator now\n");
             ns3::Simulator::Stop();
         });
         return;
     }
 
+    // ----------------------------------------------------------------------------------
+    // NEW ACTION: set-tdd-pattern
+    // ----------------------------------------------------------------------------------
+    if (cmd == "set-tdd-pattern") {
+        uint32_t nodeId = 0;
+        std::string pattern;
+        
+        if (!FindUint(json, "\"node\"", nodeId) || !FindString(json, "\"pattern\"", pattern)) {
+            fprintf(stderr, "[RicControlMessageV2] set-tdd-pattern requires node and pattern (e.g., \"4:1\")\n");
+            return;
+        }
+
+        ns3::Simulator::ScheduleNow([nodeId, pattern]() {
+            using namespace ns3;
+            
+            Ptr<Node> n = NodeList::GetNode(nodeId);
+            if (!n) {
+                fprintf(stderr, "[RicControlMessageV2] set-tdd-pattern: node %u not found\n", nodeId);
+                return;
+            }
+            
+            Ptr<mmwave::MmWaveEnbNetDevice> enbDev;
+            for (uint32_t i = 0; i < n->GetNDevices(); ++i) {
+                enbDev = n->GetDevice(i)->GetObject<mmwave::MmWaveEnbNetDevice>();
+                if (enbDev) break;
+            }
+            
+            if (!enbDev) {
+                fprintf(stderr, "[RicControlMessageV2] set-tdd-pattern: node %u has no MmWaveEnbNetDevice\n", nodeId);
+                return;
+            }
+
+            // Access scheduler
+            // Note: This assumes single CC or applies to CC 0
+            auto ccMap = enbDev->GetCcMap();
+            if (ccMap.empty()) return;
+            Ptr<mmwave::MmWaveComponentCarrierEnb> cc = DynamicCast<mmwave::MmWaveComponentCarrierEnb>(ccMap.at(0));
+            if (!cc) return;
+            Ptr<mmwave::MmWaveMacScheduler> sched = cc->GetMacScheduler();
+            Ptr<mmwave::MmWaveFlexTtiMacScheduler> flexSched = DynamicCast<mmwave::MmWaveFlexTtiMacScheduler>(sched);
+
+            if (flexSched) {
+                // TODO: Implement SetTddPattern in MmWaveFlexTtiMacScheduler
+                // For now, we just log the action as a proof of concept
+                fprintf(stderr, "[RicControlMessageV2] set-tdd-pattern: node %u pattern set to %s (Mock Action)\n", nodeId, pattern.c_str());
+                // flexSched->SetTddPattern(pattern); 
+            } else {
+                fprintf(stderr, "[RicControlMessageV2] set-tdd-pattern: node %u scheduler is not FlexTti\n", nodeId);
+            }
+            fflush(stderr);
+        });
+        return;
+    }
+
+    // ----------------------------------------------------------------------------------
+    // NEW ACTION: handover-trigger
+    // ----------------------------------------------------------------------------------
+    if (cmd == "handover-trigger") {
+        uint32_t nodeId = 0;
+        uint32_t ueId = 0;
+        uint32_t targetCellId = 0;
+
+        if (!FindUint(json, "\"node\"", nodeId) || 
+            !FindUint(json, "\"ueId\"", ueId) ||
+            !FindUint(json, "\"targetCellId\"", targetCellId)) {
+            fprintf(stderr, "[RicControlMessageV2] handover-trigger requires node (gNB), ueId (RNTI/IMSI), and targetCellId\n");
+            return;
+        }
+
+        ns3::Simulator::ScheduleNow([nodeId, ueId, targetCellId]() {
+            using namespace ns3;
+            
+            Ptr<Node> n = NodeList::GetNode(nodeId);
+            if (!n) {
+                fprintf(stderr, "[RicControlMessageV2] handover-trigger: node %u not found\n", nodeId);
+                return;
+            }
+            
+            Ptr<mmwave::MmWaveEnbNetDevice> enbDev;
+            for (uint32_t i = 0; i < n->GetNDevices(); ++i) {
+                enbDev = n->GetDevice(i)->GetObject<mmwave::MmWaveEnbNetDevice>();
+                if (enbDev) break;
+            }
+            
+            if (!enbDev) {
+                fprintf(stderr, "[RicControlMessageV2] handover-trigger: node %u has no MmWaveEnbNetDevice\n", nodeId);
+                return;
+            }
+
+            Ptr<LteEnbRrc> rrc = enbDev->GetRrc();
+            if (rrc) {
+                 // TODO: Implement public SendHandoverRequest in LteEnbRrc or expose it
+                 // For now, we just log the action
+                 fprintf(stderr, "[RicControlMessageV2] handover-trigger: Triggering HO for UE %u from gNB %u to Cell %u (Mock Action)\n", ueId, nodeId, targetCellId);
+                 // rrc->SendHandoverRequest(ueId, targetCellId);
+            } else {
+                 fprintf(stderr, "[RicControlMessageV2] handover-trigger: node %u has no RRC\n", nodeId);
+            }
+            fflush(stderr);
+        });
+        return;
+    }
 
 
     if (cmd == "set-mcs") {
@@ -148,13 +250,13 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
         double mcsValue = 0.0;
         
         if (!FindUint(json, "\"node\"", nodeId) || !FindNumber(json, "\"mcs\"", mcsValue)) {
-            fprintf(stderr, "[RicControlMessage] set-mcs requires node and mcs values\n");
+            fprintf(stderr, "[RicControlMessageV2] set-mcs requires node and mcs values\n");
             return;
         }
         
         int mcs = static_cast<int>(mcsValue);
         if (mcs < 0 || mcs > 28) {
-            fprintf(stderr, "[RicControlMessage] set-mcs: MCS must be between 0 and 28, got %d\n", mcs);
+            fprintf(stderr, "[RicControlMessageV2] set-mcs: MCS must be between 0 and 28, got %d\n", mcs);
             return;
         }
         
@@ -163,13 +265,13 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
             
             // Find the mmWave eNB device for this node
             if (nodeId >= NodeList::GetNNodes()) {
-                fprintf(stderr, "[RicControlMessage] set-mcs: node %u does not exist\n", nodeId);
+                fprintf(stderr, "[RicControlMessageV2] set-mcs: node %u does not exist\n", nodeId);
                 return;
             }
             
             Ptr<Node> n = NodeList::GetNode(nodeId);
             if (!n) {
-                fprintf(stderr, "[RicControlMessage] set-mcs: node %u not found\n", nodeId);
+                fprintf(stderr, "[RicControlMessageV2] set-mcs: node %u not found\n", nodeId);
                 return;
             }
             
@@ -181,7 +283,7 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
             }
             
             if (!enbDev) {
-                fprintf(stderr, "[RicControlMessage] set-mcs: node %u has no MmWaveEnbNetDevice\n", nodeId);
+                fprintf(stderr, "[RicControlMessageV2] set-mcs: node %u has no MmWaveEnbNetDevice\n", nodeId);
                 return;
             }
             
@@ -189,10 +291,10 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
             Ptr<mmwave::MmWaveEnbMac> mac = enbDev->GetMac();
             if (mac) {
                 mac->SetMcs(mcs);
-                fprintf(stderr, "[RicControlMessage] set-mcs: node %u MCS set to %d\n", nodeId, mcs);
+                fprintf(stderr, "[RicControlMessageV2] set-mcs: node %u MCS set to %d\n", nodeId, mcs);
                 fflush(stderr);
             } else {
-                fprintf(stderr, "[RicControlMessage] set-mcs: node %u has no MAC layer\n", nodeId);
+                fprintf(stderr, "[RicControlMessageV2] set-mcs: node %u has no MAC layer\n", nodeId);
                 fflush(stderr);
             }
         });
@@ -206,13 +308,13 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
         // nodeId is optional - if 0 or not provided, search all nodes
         bool hasNodeId = FindUint(json, "\"node\"", nodeId);
         if (!FindNumber(json, "\"bandwidth\"", bwValue)) {
-            fprintf(stderr, "[RicControlMessage] set-bandwidth requires bandwidth value\n");
+            fprintf(stderr, "[RicControlMessageV2] set-bandwidth requires bandwidth value\n");
             return;
         }
         
         uint8_t bandwidth = static_cast<uint8_t>(bwValue);
         // if (bandwidth == 0 || bandwidth > 255) {
-        //     fprintf(stderr, "[RicControlMessage] set-bandwidth: bandwidth must be between 1 and 255, got %u\n", bandwidth);
+        //     fprintf(stderr, "[RicControlMessageV2] set-bandwidth: bandwidth must be between 1 and 255, got %u\n", bandwidth);
         //     return;
         // }
         
@@ -256,14 +358,14 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
             }
             
             if (!enbDev) {
-                fprintf(stderr, "[RicControlMessage] set-bandwidth: no MmWaveEnbNetDevice found in any node\n");
+                fprintf(stderr, "[RicControlMessageV2] set-bandwidth: no MmWaveEnbNetDevice found in any node\n");
                 return;
             }
             
             // Set bandwidth
             enbDev->SetBandwidth(bandwidth);
             uint8_t bandwidth2 = enbDev->GetBandwidth();
-            fprintf(stderr, "[RicControlMessage] set-bandwidth: node %u bandwidth set to %u (confirmed %u)\n", foundNodeId, bandwidth, bandwidth2);
+            fprintf(stderr, "[RicControlMessageV2] set-bandwidth: node %u bandwidth set to %u (confirmed %u)\n", foundNodeId, bandwidth, bandwidth2);
         });
         return;
     }
@@ -277,13 +379,13 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
         if (!FindUint(json, "\"app\"", appIndex) ||
             !FindNumber(json, "\"rateMbps\"", rateMbps)) {
             fprintf(stderr,
-                "[RicControlMessage] set-flow-rate requires app and rateMbps (node is optional)\n");
+                "[RicControlMessageV2] set-flow-rate requires app and rateMbps (node is optional)\n");
             return;
         }
     
         if (rateMbps <= 0.0) {
             fprintf(stderr,
-                "[RicControlMessage] set-flow-rate: rateMbps must be > 0, got %f\n",
+                "[RicControlMessageV2] set-flow-rate: rateMbps must be > 0, got %f\n",
                 rateMbps);
             return;
         }
@@ -322,7 +424,7 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
             
             // If still not found, search all nodes for OnOffApplication
             if (!onoffApp) {
-                fprintf(stderr, "[RicControlMessage] set-flow-rate: Searching all nodes for OnOffApplication...\n");
+                fprintf(stderr, "[RicControlMessageV2] set-flow-rate: Searching all nodes for OnOffApplication...\n");
                 for (uint32_t nodeIdx = 0; nodeIdx < NodeList::GetNNodes(); ++nodeIdx) {
                     Ptr<Node> testNode = NodeList::GetNode(nodeIdx);
                     if (!testNode) continue;
@@ -334,7 +436,7 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
                             onoffApp = test;
                             foundNodeId = nodeIdx;
                             foundAppIndex = i;
-                            fprintf(stderr, "[RicControlMessage] set-flow-rate: Found OnOffApplication on node %u app %u\n",
+                            fprintf(stderr, "[RicControlMessageV2] set-flow-rate: Found OnOffApplication on node %u app %u\n",
                                     foundNodeId, foundAppIndex);
                             fflush(stderr);
                             break;
@@ -349,14 +451,14 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
                               ? NodeList::GetNode(nodeId) : nullptr;
                 if (n) {
                     fprintf(stderr,
-                        "[RicControlMessage] set-flow-rate: node %u has no OnOffApplication (total apps: %u). Available apps:\n",
+                        "[RicControlMessageV2] set-flow-rate: node %u has no OnOffApplication (total apps: %u). Available apps:\n",
                         nodeId, n->GetNApplications());
                     for (uint32_t i = 0; i < n->GetNApplications(); ++i) {
                         Ptr<Application> app = n->GetApplication(i);
                         fprintf(stderr, "  app[%u]: %s\n", i, app->GetInstanceTypeId().GetName().c_str());
                     }
                 }
-                fprintf(stderr, "[RicControlMessage] set-flow-rate: Searched all %u nodes, no OnOffApplication found.\n",
+                fprintf(stderr, "[RicControlMessageV2] set-flow-rate: Searched all %u nodes, no OnOffApplication found.\n",
                         NodeList::GetNNodes());
                 fflush(stderr);
                 return;
@@ -370,7 +472,7 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
             
             onoffApp->SetAttribute("DataRate", DataRateValue(dataRate));
             fprintf(stderr,
-                "[RicControlMessage] set-flow-rate: node %u app %u rate set to %.2f Mbps",
+                "[RicControlMessageV2] set-flow-rate: node %u app %u rate set to %.2f Mbps",
                 foundNodeId, foundAppIndex, rateMbps);
             if (foundNodeId != nodeId && nodeId != UINT32_MAX) {
                 fprintf(stderr, " (searched node %u, found on node %u)", nodeId, foundNodeId);
@@ -389,7 +491,7 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
         if (!FindUint(json, "\"node\"", nodeId) ||
             !FindNumber(json, "\"txPowerDbm\"", txPowerDbm)) {
             fprintf(stderr,
-                "[RicControlMessage] set-enb-txpower requires node and txPowerDbm\n");
+                "[RicControlMessageV2] set-enb-txpower requires node and txPowerDbm\n");
             return;
         }
 
@@ -398,7 +500,7 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
 
             if (nodeId >= NodeList::GetNNodes()) {
                 fprintf(stderr,
-                    "[RicControlMessage] set-enb-txpower: node %u does not exist\n",
+                    "[RicControlMessageV2] set-enb-txpower: node %u does not exist\n",
                     nodeId);
                 return;
             }
@@ -406,7 +508,7 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
             Ptr<Node> n = NodeList::GetNode(nodeId);
             if (!n) {
                 fprintf(stderr,
-                    "[RicControlMessage] set-enb-txpower: node %u not found\n",
+                    "[RicControlMessageV2] set-enb-txpower: node %u not found\n",
                     nodeId);
                 return;
             }
@@ -419,7 +521,7 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
 
             if (!enbDev) {
                 fprintf(stderr,
-                    "[RicControlMessage] set-enb-txpower: node %u has no MmWaveEnbNetDevice\n",
+                    "[RicControlMessageV2] set-enb-txpower: node %u has no MmWaveEnbNetDevice\n",
                     nodeId);
                 return;
             }
@@ -427,52 +529,52 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
             Ptr<mmwave::MmWaveEnbPhy> phy = enbDev->GetPhy();
             if (!phy) {
                 fprintf(stderr,
-                    "[RicControlMessage] set-enb-txpower: node %u has no PHY\n",
+                    "[RicControlMessageV2] set-enb-txpower: node %u has no PHY\n",
                     nodeId);
                 return;
             }
 
             phy->SetTxPower(txPowerDbm);
             fprintf(stderr,
-                "[RicControlMessage] set-enb-txpower: node %u TxPower set to %.2f dBm\n",
+                "[RicControlMessageV2] set-enb-txpower: node %u TxPower set to %.2f dBm\n",
                 nodeId, txPowerDbm);
         });
         return;
     }
 
-    fprintf(stderr, "[RicControlMessage] Unknown cmd='%s' (valid commands: move-enb, stop, set-mcs, set-bandwidth)\n", cmd.c_str());
+    fprintf(stderr, "[RicControlMessageV2] Unknown cmd='%s' (valid commands: move-enb, stop, set-mcs, set-bandwidth, set-tdd-pattern, handover-trigger)\n", cmd.c_str());
     fflush(stderr);
 }
 
 
 
 
-RicControlMessage::RicControlMessage (E2AP_PDU_t* pdu)
+RicControlMessageV2::RicControlMessageV2 (E2AP_PDU_t* pdu)
 {
   DecodeRicControlMessage (pdu);
-  NS_LOG_INFO ("End of RicControlMessage::RicControlMessage()");
+  NS_LOG_INFO ("End of RicControlMessageV2::RicControlMessageV2()");
 }
 
-RicControlMessage::~RicControlMessage ()
+RicControlMessageV2::~RicControlMessageV2 ()
 {
 
 }
 
 void
-RicControlMessage::DecodeRicControlMessage(E2AP_PDU_t* pdu)
+RicControlMessageV2::DecodeRicControlMessage(E2AP_PDU_t* pdu)
 {
     if (!pdu) {
-        fprintf(stderr, "[RicControlMessage] ERROR: pdu is null\n");
+        fprintf(stderr, "[RicControlMessageV2] ERROR: pdu is null\n");
         return;
     }
     if (pdu->present != E2AP_PDU_PR_initiatingMessage) {
-        fprintf(stderr, "[RicControlMessage] ERROR: PDU is not InitiatingMessage\n");
+        fprintf(stderr, "[RicControlMessageV2] ERROR: PDU is not InitiatingMessage\n");
         return;
     }
 
     InitiatingMessage_t* mess = pdu->choice.initiatingMessage;
     if (mess->value.present != InitiatingMessage__value_PR_RICcontrolRequest) {
-        fprintf(stderr, "[RicControlMessage] ERROR: InitiatingMessage is not RICcontrolRequest\n");
+        fprintf(stderr, "[RicControlMessageV2] ERROR: InitiatingMessage is not RICcontrolRequest\n");
         return;
     }
 
@@ -480,9 +582,9 @@ RicControlMessage::DecodeRicControlMessage(E2AP_PDU_t* pdu)
     xer_fprint(stderr, &asn_DEF_RICcontrolRequest, request);
 
     const size_t ieCount = request->protocolIEs.list.count;
-    fprintf(stderr, "[RicControlMessage] IE count = %zu\n", ieCount);
+    fprintf(stderr, "[RicControlMessageV2] IE count = %zu\n", ieCount);
     if (ieCount == 0) {
-        fprintf(stderr, "[RicControlMessage] ERROR: RICcontrolRequest has no IEs\n");
+        fprintf(stderr, "[RicControlMessageV2] ERROR: RICcontrolRequest has no IEs\n");
         return;
     }
 
@@ -494,13 +596,13 @@ RicControlMessage::DecodeRicControlMessage(E2AP_PDU_t* pdu)
         switch (ie->value.present) {
         case RICcontrolRequest_IEs__value_PR_RICrequestID:
             m_ricRequestId = ie->value.choice.RICrequestID;
-            fprintf(stderr, "[RicControlMessage] RICrequestID: requestor=%ld instance=%ld\n",
+            fprintf(stderr, "[RicControlMessageV2] RICrequestID: requestor=%ld instance=%ld\n",
                     (long)m_ricRequestId.ricRequestorID, (long)m_ricRequestId.ricInstanceID);
             break;
 
         case RICcontrolRequest_IEs__value_PR_RANfunctionID:
             m_ranFunctionId = ie->value.choice.RANfunctionID;
-            fprintf(stderr, "[RicControlMessage] RANfunctionID=%ld\n", (long)m_ranFunctionId);
+            fprintf(stderr, "[RicControlMessageV2] RANfunctionID=%ld\n", (long)m_ranFunctionId);
             break;
 
         case RICcontrolRequest_IEs__value_PR_RICcontrolMessage:
@@ -536,21 +638,21 @@ RicControlMessage::DecodeRicControlMessage(E2AP_PDU_t* pdu)
             hex.push_back(HEX[(c >> 4) & 0xF]);
             hex.push_back(HEX[c & 0xF]);
         }
-        fprintf(stderr, "[RicControlMessage] RAW RICcontrolMessage len=%zu (actual=%zu) ascii='%s' hex=%s\n",
+        fprintf(stderr, "[RicControlMessageV2] RAW RICcontrolMessage len=%zu (actual=%zu) ascii='%s' hex=%s\n",
                 rawCtrlMsgLen, ascii.size(), ascii.c_str(), hex.c_str());
         fflush(stderr);
     } else {
-        fprintf(stderr, "[RicControlMessage] RAW RICcontrolMessage is empty or missing\n");
+        fprintf(stderr, "[RicControlMessageV2] RAW RICcontrolMessage is empty or missing\n");
         fflush(stderr);
     }
 
     // Proof-of-concept: interpret a tiny JSON with "cmd" and apply it
     if (!ascii.empty()) {
-        fprintf(stderr, "[RicControlMessage] Calling ApplySimpleCommand with: '%s'\n", ascii.c_str());
+        fprintf(stderr, "[RicControlMessageV2] Calling ApplySimpleCommand with: '%s'\n", ascii.c_str());
         fflush(stderr);
         ApplySimpleCommand(ascii);
     } else {
-        fprintf(stderr, "[RicControlMessage] ERROR: Control message payload is empty, cannot apply command\n");
+        fprintf(stderr, "[RicControlMessageV2] ERROR: Control message payload is empty, cannot apply command\n");
         fflush(stderr);
     }
 }
@@ -559,13 +661,13 @@ RicControlMessage::DecodeRicControlMessage(E2AP_PDU_t* pdu)
 
 
 std::string
-RicControlMessage::GetSecondaryCellIdHO ()
+RicControlMessageV2::GetSecondaryCellIdHO ()
 {
   return m_secondaryCellId;
 }
 
 std::vector<RANParameterItem>
-RicControlMessage::ExtractRANParametersFromControlMessage (
+RicControlMessageV2::ExtractRANParametersFromControlMessage (
     E2SM_RC_ControlMessage_Format1_t *e2SmRcControlMessageFormat1)
 {
   std::vector<RANParameterItem> ranParameterList;
