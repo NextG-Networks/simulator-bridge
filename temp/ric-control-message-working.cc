@@ -22,7 +22,7 @@
  *		   Michele Polese <michele.polese@gmail.com>
  */
  
-#include "ric-control-message.h"
+#include <ns3/ric-control-message.h>
 #include <ns3/asn1c-types.h>
 #include <ns3/log.h>
 #include <bitset>
@@ -34,13 +34,13 @@
 #include "ns3/simulator.h"
 #include "ns3/vector.h"
 
-// #include "control-gateway.h" // Might not be needed for V2 standalone
+#include "control-gateway.h"
+#include "ric-control-message.h"
 #include <ns3/mmwave-enb-net-device.h>
 #include <ns3/mmwave-enb-mac.h>
 #include <ns3/onoff-application.h>
 #include <ns3/data-rate.h>
-#include <ns3/mmwave-flex-tti-mac-scheduler.h>
-#include <ns3/lte-enb-rrc.h>
+//#include <ns3/time.h>
 
 namespace ns3 {
 
@@ -141,127 +141,6 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
         return;
     }
 
-    // ----------------------------------------------------------------------------------
-    // NEW ACTION: set-tdd-pattern
-    // ----------------------------------------------------------------------------------
-    // if (cmd == "set-tdd-pattern") {
-    //     uint32_t nodeId = 0;
-    //     std::string pattern;
-        
-    //     if (!FindUint(json, "\"node\"", nodeId) || !FindString(json, "\"pattern\"", pattern)) {
-    //         fprintf(stderr, "[RicControlMessage] set-tdd-pattern requires node and pattern (e.g., \"4:1\")\n");
-    //         return;
-    //     }
-
-    //     ns3::Simulator::ScheduleNow([nodeId, pattern]() {
-    //         using namespace ns3;
-            
-    //         Ptr<Node> n = NodeList::GetNode(nodeId);
-    //         if (!n) {
-    //             fprintf(stderr, "[RicControlMessage] set-tdd-pattern: node %u not found\n", nodeId);
-    //             return;
-    //         }
-            
-    //         Ptr<mmwave::MmWaveEnbNetDevice> enbDev;
-    //         for (uint32_t i = 0; i < n->GetNDevices(); ++i) {
-    //             enbDev = n->GetDevice(i)->GetObject<mmwave::MmWaveEnbNetDevice>();
-    //             if (enbDev) break;
-    //         }
-            
-    //         if (!enbDev) {
-    //             fprintf(stderr, "[RicControlMessage] set-tdd-pattern: node %u has no MmWaveEnbNetDevice\n", nodeId);
-    //             return;
-    //         }
-
-    //         // Access scheduler
-    //         // Note: This assumes single CC or applies to CC 0
-    //         auto ccMap = enbDev->GetCcMap();
-    //         if (ccMap.empty()) {
-    //             fprintf(stderr, "[RicControlMessage] set-tdd-pattern: node %u has empty CC map\n", nodeId);
-    //             return;
-    //         }
-            
-    //         // Find the first component carrier (usually key 0)
-    //         auto it = ccMap.find(0);
-    //         if (it == ccMap.end() && !ccMap.empty()) {
-    //             // If key 0 doesn't exist, use the first available CC
-    //             it = ccMap.begin();
-    //         }
-            
-    //         if (it == ccMap.end()) {
-    //             fprintf(stderr, "[RicControlMessage] set-tdd-pattern: node %u has no component carriers\n", nodeId);
-    //             return;
-    //         }
-            
-    //         Ptr<mmwave::MmWaveComponentCarrierEnb> cc = DynamicCast<mmwave::MmWaveComponentCarrierEnb>(it->second);
-    //         if (!cc) {
-    //             fprintf(stderr, "[RicControlMessage] set-tdd-pattern: node %u component carrier is not MmWaveComponentCarrierEnb\n", nodeId);
-    //             return;
-    //         }
-    //         Ptr<mmwave::MmWaveMacScheduler> sched = cc->GetMacScheduler();
-    //         Ptr<mmwave::MmWaveFlexTtiMacScheduler> flexSched = DynamicCast<mmwave::MmWaveFlexTtiMacScheduler>(sched);
-
-    //         if (flexSched) {
-    //             // TODO: Implement SetTddPattern in MmWaveFlexTtiMacScheduler
-    //             // For now, we just log the action as a proof of concept
-    //             fprintf(stderr, "[RicControlMessage] set-tdd-pattern: node %u pattern set to %s (Mock Action)\n", nodeId, pattern.c_str());
-    //             // flexSched->SetTddPattern(pattern); 
-    //         } else {
-    //             fprintf(stderr, "[RicControlMessage] set-tdd-pattern: node %u scheduler is not FlexTti\n", nodeId);
-    //         }
-    //         fflush(stderr);
-    //     });
-    //     return;
-    // }
-
-    // ----------------------------------------------------------------------------------
-    // NEW ACTION: handover-trigger
-    // ----------------------------------------------------------------------------------
-    if (cmd == "handover-trigger") {
-        uint32_t nodeId = 0;
-        uint32_t ueId = 0;
-        uint32_t targetCellId = 0;
-
-        if (!FindUint(json, "\"node\"", nodeId) || 
-            !FindUint(json, "\"ueId\"", ueId) ||
-            !FindUint(json, "\"targetCellId\"", targetCellId)) {
-            fprintf(stderr, "[RicControlMessage] handover-trigger requires node (gNB), ueId (RNTI/IMSI), and targetCellId\n");
-            return;
-        }
-
-        ns3::Simulator::ScheduleNow([nodeId, ueId, targetCellId]() {
-            using namespace ns3;
-            
-            Ptr<Node> n = NodeList::GetNode(nodeId);
-            if (!n) {
-                fprintf(stderr, "[RicControlMessage] handover-trigger: node %u not found\n", nodeId);
-                return;
-            }
-            
-            Ptr<mmwave::MmWaveEnbNetDevice> enbDev;
-            for (uint32_t i = 0; i < n->GetNDevices(); ++i) {
-                enbDev = n->GetDevice(i)->GetObject<mmwave::MmWaveEnbNetDevice>();
-                if (enbDev) break;
-            }
-            
-            if (!enbDev) {
-                fprintf(stderr, "[RicControlMessage] handover-trigger: node %u has no MmWaveEnbNetDevice\n", nodeId);
-                return;
-            }
-
-            Ptr<LteEnbRrc> rrc = enbDev->GetRrc();
-            if (rrc) {
-                 // TODO: Implement public SendHandoverRequest in LteEnbRrc or expose it
-                 // For now, we just log the action
-                 fprintf(stderr, "[RicControlMessage] handover-trigger: Triggering HO for UE %u from gNB %u to Cell %u (Mock Action)\n", ueId, nodeId, targetCellId);
-                 // rrc->SendHandoverRequest(ueId, targetCellId);
-            } else {
-                 fprintf(stderr, "[RicControlMessage] handover-trigger: node %u has no RRC\n", nodeId);
-            }
-            fflush(stderr);
-        });
-        return;
-    }
 
 
     if (cmd == "set-mcs") {
@@ -561,7 +440,7 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
         return;
     }
 
-    fprintf(stderr, "[RicControlMessage] Unknown cmd='%s' (valid commands: move-enb, stop, set-mcs, set-bandwidth, set-tdd-pattern, handover-trigger)\n", cmd.c_str());
+    fprintf(stderr, "[RicControlMessage] Unknown cmd='%s' (valid commands: move-enb, stop, set-mcs, set-bandwidth)\n", cmd.c_str());
     fflush(stderr);
 }
 

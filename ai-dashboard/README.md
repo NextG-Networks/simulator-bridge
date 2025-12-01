@@ -11,6 +11,29 @@ Real-time visualization dashboard for NS3 simulation KPIs using Grafana and Infl
 
 ## Quick Start
 
+### Automated Deployment (Recommended)
+
+```bash
+cd ai-dashboard
+./deploy_dashboard.sh
+```
+
+This automatically:
+- Installs dependencies
+- Sets up Grafana and InfluxDB
+- Imports CSV data (if available)
+- Starts the CSV bridge
+
+**Options:**
+- `--skip-install` - Skip dependency installation
+- `--skip-setup` - Skip Grafana/InfluxDB setup
+- `--skip-import` - Skip CSV data import
+- `--skip-bridge` - Skip starting CSV bridge
+- `--background` - Run CSV bridge in background
+- `--non-interactive` or `-y` - Non-interactive mode
+
+### Manual Setup
+
 ```bash
 # 1. Install dependencies
 ./install_dashboard.sh

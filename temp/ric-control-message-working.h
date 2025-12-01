@@ -76,4 +76,4 @@ namespace ns3 {
   };
 }
 
-#endif /* RIC_CONTROL_MESSAGE_V2_H */
+#endif /* RIC_CONTROL_MESSAGE_H */

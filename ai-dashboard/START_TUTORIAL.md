@@ -2,6 +2,45 @@
 
 A step-by-step tutorial to set up and use the NS3 KPI Dashboard with InfluxDB and Grafana.
 
+## Quick Deploy (Automated)
+
+**For automated deployment, use the deploy script:**
+
+```bash
+cd ai-dashboard
+./deploy_dashboard.sh
+```
+
+This will automatically:
+- Install dependencies
+- Set up Grafana and InfluxDB
+- Import CSV data (if available)
+- Start the CSV bridge
+
+**Options:**
+- `--skip-install` - Skip dependency installation
+- `--skip-setup` - Skip Grafana/InfluxDB setup
+- `--skip-import` - Skip CSV data import
+- `--skip-bridge` - Skip starting CSV bridge
+- `--background` - Run CSV bridge in background
+- `--non-interactive` or `-y` - Non-interactive mode
+
+**Example:**
+```bash
+# Full automated deployment
+./deploy_dashboard.sh
+
+# Deploy without importing data
+./deploy_dashboard.sh --skip-import
+
+# Deploy and run bridge in background
+./deploy_dashboard.sh --background
+```
+
+## Manual Setup (Step-by-Step)
+
+If you prefer manual setup or need to troubleshoot:
+
 ## Prerequisites
 
 - Docker and Docker Compose installed

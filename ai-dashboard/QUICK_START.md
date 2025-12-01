@@ -2,7 +2,16 @@
 
 > **For detailed step-by-step instructions, see [START_TUTORIAL.md](START_TUTORIAL.md)**
 
-## Quick Setup (5 minutes)
+## Automated Deployment (Recommended)
+
+```bash
+cd ai-dashboard
+./deploy_dashboard.sh
+```
+
+This will automatically set up everything. Done!
+
+## Manual Quick Setup (5 minutes)
 
 1. **Install dependencies**:
    ```bash

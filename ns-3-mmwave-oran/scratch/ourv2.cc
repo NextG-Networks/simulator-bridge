@@ -688,7 +688,7 @@ Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::SymPerSlot",
   pingApp->TraceConnectWithoutContext("Rtt", MakeCallback(&PingRttCallback));
 
   // mmWave traces
-  // mmw->EnableTraces();
+  mmw->EnableTraces();
 
   // Start the unified sampler (every 0.1 s) — adjust radius as you like
   const double covRadius = 100.0;

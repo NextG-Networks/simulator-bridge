@@ -365,8 +365,69 @@ int main (int argc, char** argv)
   StringValue outV; GlobalValue::GetValueByName("outDir", outV);
   fs::path outDir = outV.Get();
 
-  // ... (Reading other globals omitted for brevity, using defaults from ourv2.cc) ...
-  // Assuming defaults for E2/Control as in ourv2.cc
+  // Read E2/Control GlobalValues
+  BooleanValue booleanValue;
+  StringValue stringValue;
+  DoubleValue doubleValue;
+
+  GlobalValue::GetValueByName ("useSemaphores", booleanValue);
+  bool useSemaphores = booleanValue.Get ();
+  GlobalValue::GetValueByName ("controlFileName", stringValue);
+  std::string controlFilename = stringValue.Get ();
+  GlobalValue::GetValueByName ("e2lteEnabled", booleanValue);
+  bool e2lteEnabled = booleanValue.Get ();
+  GlobalValue::GetValueByName ("e2nrEnabled", booleanValue);
+  bool e2nrEnabled = booleanValue.Get ();
+  GlobalValue::GetValueByName ("e2du", booleanValue);
+  bool e2du = booleanValue.Get ();
+  GlobalValue::GetValueByName ("e2cuUp", booleanValue);
+  bool e2cuUp = booleanValue.Get ();
+  GlobalValue::GetValueByName ("e2cuCp", booleanValue);
+  bool e2cuCp = booleanValue.Get ();
+  GlobalValue::GetValueByName ("reducedPmValues", booleanValue);
+  bool reducedPmValues = booleanValue.Get ();
+  GlobalValue::GetValueByName ("indicationPeriodicity", doubleValue);
+  double indicationPeriodicity = doubleValue.Get ();
+  GlobalValue::GetValueByName ("e2TermIp", stringValue);
+  std::string e2TermIp = stringValue.Get ();
+  GlobalValue::GetValueByName ("enableE2FileLogging", booleanValue);
+  bool enableE2FileLogging = booleanValue.Get ();
+
+  NS_LOG_UNCOND ("e2lteEnabled " << e2lteEnabled << " e2nrEnabled " << e2nrEnabled << " e2du "
+                                 << e2du << " e2cuCp " << e2cuCp << " e2cuUp " << e2cuUp
+                                 << " controlFilename " << controlFilename
+                                 << " useSemaphores " << useSemaphores
+                                 << " indicationPeriodicity " << indicationPeriodicity
+                                 << " reducedPmValues " << reducedPmValues
+                                 << " e2TermIp " << e2TermIp);
+
+  //-----------------------E2 CONFIGURATION----------------------------
+  // E2 periodicity on the device
+  Config::SetDefault("ns3::MmWaveEnbNetDevice::E2Periodicity",
+                     DoubleValue(indicationPeriodicity));
+
+  // Helper-level E2 config
+  Config::SetDefault("ns3::MmWaveHelper::E2ModeLte",
+                     BooleanValue(e2lteEnabled));
+  Config::SetDefault("ns3::MmWaveHelper::E2ModeNr",
+                     BooleanValue(e2nrEnabled));
+  Config::SetDefault("ns3::MmWaveHelper::E2Periodicity",
+                     DoubleValue(indicationPeriodicity));
+  Config::SetDefault("ns3::MmWaveHelper::E2TermIp",
+                     StringValue(e2TermIp));
+
+  // Device-level E2 report switches
+  Config::SetDefault("ns3::MmWaveEnbNetDevice::EnableDuReport",
+                     BooleanValue(e2du));
+  Config::SetDefault("ns3::MmWaveEnbNetDevice::EnableCuUpReport",
+                     BooleanValue(e2cuUp));
+  Config::SetDefault("ns3::MmWaveEnbNetDevice::EnableCuCpReport",
+                     BooleanValue(e2cuCp));
+  Config::SetDefault("ns3::MmWaveEnbNetDevice::EnableE2FileLogging",
+                     BooleanValue(enableE2FileLogging));
+  Config::SetDefault("ns3::MmWaveEnbNetDevice::ReducedPmValues",
+                     BooleanValue(reducedPmValues));
+  //-------------------------------------------------------------------
 
   // RF/system defaults
   Config::SetDefault("ns3::MmWavePhyMacCommon::CenterFreq", DoubleValue(28e9));
