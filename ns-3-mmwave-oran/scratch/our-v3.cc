@@ -23,6 +23,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <iomanip>
 #include <cmath>
 #include <ctime>
@@ -223,10 +224,12 @@ static void ChangeMcs(Ptr<Node> gnb, int mcs)
       flexSched->SetAttribute("FixedMcsUl", BooleanValue(true));
       flexSched->SetAttribute("McsDefaultUl", UintegerValue(mcs));
       NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [Scenario] Setting Fixed MCS to " << mcs);
+      std::cerr << "  → MCS change applied: Fixed MCS=" << mcs << " (DL and UL)" << std::endl;
     } else {
       flexSched->SetAttribute("FixedMcsDl", BooleanValue(false));
       flexSched->SetAttribute("FixedMcsUl", BooleanValue(false));
       NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [Scenario] Restoring Adaptive MCS");
+      std::cerr << "  → MCS change applied: Adaptive MCS restored (DL and UL)" << std::endl;
     }
   }
 }
@@ -254,10 +257,30 @@ static void ScheduleNextMcsEvent(Ptr<Node> gnb, bool nextIsLow)
     int targetMcs = 4 + (rand() % 6); 
     ChangeMcs(gnb, targetMcs);
     double duration = 10.0;
+    std::cerr << "\n"
+              << "╔════════════════════════════════════════════════════════════╗\n"
+              << "║  [EVENT] MCS DEGRADATION TRIGGERED                        ║\n"
+              << "╠════════════════════════════════════════════════════════════╣\n"
+              << "║  Time: " << std::fixed << std::setprecision(2) << std::setw(48) << Simulator::Now().GetSeconds() << "s ║\n"
+              << "║  Action: Setting LOW MCS (4-9 range)                      ║\n"
+              << "║  Target MCS: " << std::setw(42) << targetMcs << " ║\n"
+              << "║  Duration: " << std::setw(45) << duration << "s ║\n"
+              << "║  Impact: System performance will degrade                  ║\n"
+              << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
+    NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] MCS DEGRADATION - Setting LOW MCS=" << targetMcs << " for " << duration << "s");
     Simulator::Schedule(Seconds(duration), [gnb, targetMcs]() {
       int currentMcs = GetCurrentMcs(gnb);
       if (currentMcs != -1 && currentMcs != targetMcs) {
-        NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [Scenario] AI intervention detected. Extending window by 5s.");
+        std::cerr << "\n"
+                  << "╔════════════════════════════════════════════════════════════╗\n"
+                  << "║  [EVENT] AI INTERVENTION DETECTED                         ║\n"
+                  << "╠════════════════════════════════════════════════════════════╣\n"
+                  << "║  Time: " << std::fixed << std::setprecision(2) << std::setw(48) << Simulator::Now().GetSeconds() << "s ║\n"
+                  << "║  Expected MCS: " << std::setw(40) << targetMcs << " ║\n"
+                  << "║  Actual MCS: " << std::setw(43) << currentMcs << " ║\n"
+                  << "║  Action: Extending event window by 5s                    ║\n"
+                  << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
+        NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] AI intervention detected (MCS=" << currentMcs << " != " << targetMcs << "). Extending window by 5s.");
         Simulator::Schedule(Seconds(5.0), [gnb]() { ScheduleNextMcsEvent(gnb, false); });
       } else {
         ScheduleNextMcsEvent(gnb, false);
@@ -267,10 +290,30 @@ static void ScheduleNextMcsEvent(Ptr<Node> gnb, bool nextIsLow)
     int targetMcs = 1 + (rand() % 28);
     ChangeMcs(gnb, targetMcs);
     double duration = 10.0;
+    std::cerr << "\n"
+              << "╔════════════════════════════════════════════════════════════╗\n"
+              << "║  [EVENT] MCS RANDOMIZATION TRIGGERED                      ║\n"
+              << "╠════════════════════════════════════════════════════════════╣\n"
+              << "║  Time: " << std::fixed << std::setprecision(2) << std::setw(48) << Simulator::Now().GetSeconds() << "s ║\n"
+              << "║  Action: Setting RANDOM MCS (1-28 range)                  ║\n"
+              << "║  Target MCS: " << std::setw(42) << targetMcs << " ║\n"
+              << "║  Duration: " << std::setw(45) << duration << "s ║\n"
+              << "║  Impact: Unpredictable system performance                 ║\n"
+              << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
+    NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] MCS RANDOMIZATION - Setting RANDOM MCS=" << targetMcs << " for " << duration << "s");
     Simulator::Schedule(Seconds(duration), [gnb, targetMcs]() {
       int currentMcs = GetCurrentMcs(gnb);
       if (currentMcs != -1 && currentMcs != targetMcs) {
-        NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [Scenario] AI intervention detected. Extending window by 5s.");
+        std::cerr << "\n"
+                  << "╔════════════════════════════════════════════════════════════╗\n"
+                  << "║  [EVENT] AI INTERVENTION DETECTED                         ║\n"
+                  << "╠════════════════════════════════════════════════════════════╣\n"
+                  << "║  Time: " << std::fixed << std::setprecision(2) << std::setw(48) << Simulator::Now().GetSeconds() << "s ║\n"
+                  << "║  Expected MCS: " << std::setw(40) << targetMcs << " ║\n"
+                  << "║  Actual MCS: " << std::setw(43) << currentMcs << " ║\n"
+                  << "║  Action: Extending event window by 5s                    ║\n"
+                  << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
+        NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] AI intervention detected (MCS=" << currentMcs << " != " << targetMcs << "). Extending window by 5s.");
         Simulator::Schedule(Seconds(5.0), [gnb]() { ScheduleNextMcsEvent(gnb, true); });
       } else {
         ScheduleNextMcsEvent(gnb, true);
@@ -297,12 +340,34 @@ static void RandomBlockageEvent(NodeContainer ues, Ptr<Node> gnb)
             double blockageNf = originalNf + 30.0; // +30dB noise figure = severe blockage
             
             phy->SetNoiseFigure(blockageNf);
-            NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [Event] Random Blockage triggered for UE " << ueDev->GetImsi() << " (NF increased by 30dB)");
+            uint64_t imsi = ueDev->GetImsi();
+            std::cerr << "\n"
+                      << "╔════════════════════════════════════════════════════════════╗\n"
+                      << "║  [EVENT] RANDOM BLOCKAGE TRIGGERED                       ║\n"
+                      << "╠════════════════════════════════════════════════════════════╣\n"
+                      << "║  Time: " << std::fixed << std::setprecision(2) << std::setw(48) << Simulator::Now().GetSeconds() << "s ║\n"
+                      << "║  Affected UE: " << std::setw(42) << imsi << " ║\n"
+                      << "║  UE Index: " << std::setw(45) << ueIdx << " ║\n"
+                      << "║  Original Noise Figure: " << std::setprecision(1) << std::setw(33) << originalNf << " dB ║\n"
+                      << "║  Blockage Noise Figure: " << std::setw(33) << blockageNf << " dB ║\n"
+                      << "║  Impact: +30dB noise = severe signal degradation         ║\n"
+                      << "║  Duration: " << std::setprecision(0) << std::setw(45) << "5.0s ║\n"
+                      << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
+            NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] Random Blockage triggered for UE " << imsi << " (NF increased by 30dB from " << originalNf << "dB to " << blockageNf << "dB)");
             
             // Restore after 5 seconds
-            Simulator::Schedule(Seconds(5.0), [phy, originalNf, ueDev]() {
+            Simulator::Schedule(Seconds(5.0), [phy, originalNf, ueDev, imsi, ueIdx]() {
                 phy->SetNoiseFigure(originalNf);
-                NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [Event] Random Blockage ended for UE " << ueDev->GetImsi());
+                std::cerr << "\n"
+                          << "╔════════════════════════════════════════════════════════════╗\n"
+                          << "║  [EVENT] RANDOM BLOCKAGE ENDED                           ║\n"
+                          << "╠════════════════════════════════════════════════════════════╣\n"
+                          << "║  Time: " << std::fixed << std::setprecision(2) << std::setw(48) << Simulator::Now().GetSeconds() << "s ║\n"
+                          << "║  Affected UE: " << std::setw(42) << imsi << " ║\n"
+                          << "║  UE Index: " << std::setw(45) << ueIdx << " ║\n"
+                          << "║  Noise Figure restored to: " << std::setprecision(1) << std::setw(30) << originalNf << " dB ║\n"
+                          << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
+                NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] Random Blockage ended for UE " << imsi << " (NF restored to " << originalNf << "dB)");
             });
         }
     }
@@ -331,12 +396,32 @@ static void TrafficSpikeEvent(NodeContainer remoteHosts)
         DataRate spikeRate("500Mbps");   // 10x spike
         
         onOffApp->SetAttribute("DataRate", DataRateValue(spikeRate));
-        NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [Event] Traffic Spike triggered for RH " << rhIdx << " (500Mbps)");
+        std::cerr << "\n"
+                  << "╔════════════════════════════════════════════════════════════╗\n"
+                  << "║  [EVENT] TRAFFIC SPIKE TRIGGERED                          ║\n"
+                  << "╠════════════════════════════════════════════════════════════╣\n"
+                  << "║  Time: " << std::fixed << std::setprecision(2) << std::setw(48) << Simulator::Now().GetSeconds() << "s ║\n"
+                  << "║  Remote Host Index: " << std::setw(38) << rhIdx << " ║\n"
+                  << "║  Original Data Rate: " << std::setw(38) << "50 Mbps ║\n"
+                  << "║  Spike Data Rate: " << std::setw(40) << "500 Mbps ║\n"
+                  << "║  Increase: " << std::setw(47) << "10x (1000%) ║\n"
+                  << "║  Impact: Network congestion, higher latency              ║\n"
+                  << "║  Duration: " << std::setw(45) << "5.0s ║\n"
+                  << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
+        NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] Traffic Spike triggered for RH " << rhIdx << " (50Mbps -> 500Mbps, 10x increase)");
         
         // Restore after 5 seconds
         Simulator::Schedule(Seconds(5.0), [onOffApp, originalRate, rhIdx]() {
             onOffApp->SetAttribute("DataRate", DataRateValue(originalRate));
-            NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [Event] Traffic Spike ended for RH " << rhIdx);
+            std::cerr << "\n"
+                      << "╔════════════════════════════════════════════════════════════╗\n"
+                      << "║  [EVENT] TRAFFIC SPIKE ENDED                              ║\n"
+                      << "╠════════════════════════════════════════════════════════════╣\n"
+                      << "║  Time: " << std::fixed << std::setprecision(2) << std::setw(48) << Simulator::Now().GetSeconds() << "s ║\n"
+                      << "║  Remote Host Index: " << std::setw(38) << rhIdx << " ║\n"
+                      << "║  Data Rate restored to: " << std::setw(35) << "50 Mbps ║\n"
+                      << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
+            NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] Traffic Spike ended for RH " << rhIdx << " (restored to 50Mbps)");
         });
     }
     
