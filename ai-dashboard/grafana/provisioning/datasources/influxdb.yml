@@ -1,0 +1,18 @@
+apiVersion: 1
+
+datasources:
+  - name: InfluxDB
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    isDefault: true
+    jsonData:
+      version: Flux
+      organization: ns3-org
+      defaultBucket: ns3-kpis
+      tlsSkipVerify: true
+      httpMode: POST
+    secureJsonData:
+      token: my-super-secret-auth-token
+    editable: true
+    version: 1
