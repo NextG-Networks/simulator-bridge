@@ -1,13 +1,33 @@
 # Quick Start Guide - Grafana Dashboard
 
-## Current Status
+> **For detailed step-by-step instructions, see [START_TUTORIAL.md](START_TUTORIAL.md)**
 
-Based on your verification output:
-- ✅ CSV files exist
-- ✅ InfluxDB connection works
-- ✅ Measurements exist (gnb_kpis, ue_kpis)
-- ⚠️  No recent data (data may be older than 1 hour)
-- ⚠️  Dashboard not appearing in Grafana
+## Quick Setup (5 minutes)
+
+1. **Install dependencies**:
+   ```bash
+   cd ai-dashboard
+   ./install_dashboard.sh
+   ```
+
+2. **Set up and start services**:
+   ```bash
+   ./setup_grafana.sh
+   docker compose up -d
+   ```
+
+3. **Import CSV data** (if you have existing data):
+   ```bash
+   source venv/bin/activate  # if using venv
+   python3 import_csv_data.py
+   ```
+
+4. **Access Grafana**: http://localhost:3000 (admin/admin)
+
+5. **Start real-time updates**:
+   ```bash
+   python3 csv_to_influxdb.py
+   ```
 
 ## Step 1: Import Existing CSV Data
 

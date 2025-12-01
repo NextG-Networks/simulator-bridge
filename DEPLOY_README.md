@@ -56,6 +56,9 @@ You can skip individual steps if they're already completed:
 
 # Non-interactive mode (useful for automation/CI)
 ./deploy.sh --non-interactive --background
+
+# Skip relay server (if you're running it separately)
+./deploy.sh --skip-relay
 ```
 
 ## Command Line Options
@@ -66,6 +69,7 @@ You can skip individual steps if they're already completed:
 | `--skip-ric` | Skip RIC container setup |
 | `--skip-xapp` | Skip xApp container setup and startup |
 | `--skip-ns3` | Skip ns-3 simulation |
+| `--skip-relay` | Skip AI Relay Server startup |
 | `--background` | Run ns-3 simulation in background |
 | `--non-interactive` or `-y` | Run without prompts (uses existing containers/processes if found) |
 
@@ -83,14 +87,22 @@ You can skip individual steps if they're already completed:
    - Builds/creates containers: db, e2term, e2mgr, e2rtmansim
    - Checks if containers are already running
 
-3. **Start xApp Container** (`setup-sample-xapp.sh`)
+3. **Start AI Relay Server** (`ai_relay_server.py`)
+   - Starts the relay server that bridges xApp and external AI
+   - Listens on port 5000 for xApp connections
+   - Forwards KPIs to external AI server (default: 127.0.0.1:6000)
+   - Runs in background with logs written to `relay_server.log`
+   - Checks if already running to avoid duplicates
+
+4. **Start xApp Container** (`setup-sample-xapp.sh`)
    - Builds the sample-xapp Docker image
    - Creates and starts the `sample-xapp-24` container
    - Configures the container with proper network and volumes
 
-4. **Run xApp** (`run_xapp.sh` inside container)
+5. **Run xApp** (`run_xapp.sh` inside container)
    - Starts the xApp Python process
    - Starts the connector
+   - Connects to relay server on port 5000
    - Runs in background inside the container
 
 ### Environment 2: ns-3 Simulation
@@ -145,6 +157,9 @@ docker logs -f sample-xapp-24
 # xApp application log (inside container)
 docker exec sample-xapp-24 cat /home/container.log
 
+# Relay server logs
+tail -f relay_server.log
+
 # RIC container logs
 docker logs db
 docker logs e2term
@@ -165,6 +180,22 @@ docker exec -it e2term bash
 docker exec -it e2mgr bash
 ```
 
+### Managing Relay Server
+
+```bash
+# Check if relay server is running
+ps aux | grep ai_relay_server.py
+
+# Stop relay server (if started by deploy script)
+kill $(cat .relay_server.pid) 2>/dev/null || true
+
+# Start relay server manually
+./run_ai_relay.sh
+
+# Or run directly
+python3 ai_relay_server.py
+```
+
 ## Assumptions
 
 The script makes the following assumptions:
@@ -173,7 +204,8 @@ The script makes the following assumptions:
 2. **Container Names**: xApp container is named `sample-xapp-24` (based on XAPP_IP=10.0.2.24)
 3. **Script Locations**: Setup scripts are in `colosseum-near-rt-ric/setup-scripts/`
 4. **Docker Network**: RIC containers use the `ric` Docker network
-5. **Interactive Mode**: By default, the script may prompt for confirmation when containers already exist
+5. **Relay Server**: AI Relay Server listens on port 5000 and forwards to external AI on port 6000 (configurable via environment variables)
+6. **Interactive Mode**: By default, the script may prompt for confirmation when containers already exist
 
 ## Converting to Docker Compose
 

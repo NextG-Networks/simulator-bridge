@@ -1,6 +1,10 @@
-# KPI Dashboard - Grafana Visualization
+# NS3 KPI Dashboard - Grafana & InfluxDB
 
 A professional real-time dashboard for visualizing KPIs from NS3 simulation using Grafana and InfluxDB.
+
+## Quick Start
+
+**New to this?** Start here: [START_TUTORIAL.md](START_TUTORIAL.md)
 
 ## Overview
 
@@ -322,6 +326,8 @@ This script checks:
 - Data measurements
 - Recent data points
 - CSV file availability
+
+**For first-time setup, follow [START_TUTORIAL.md](START_TUTORIAL.md)**
 
 ## Stopping Services
 

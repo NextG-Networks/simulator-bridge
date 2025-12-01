@@ -76,9 +76,12 @@ def init_csv_files():
     if file_exists:
         with open(CSV_UE_FILE, 'r') as f:
             reader = csv.DictReader(f)
-            ue_fieldnames = reader.fieldnames or ['timestamp', 'meid', 'cell_id', 'ue_id']
+            ue_fieldnames = reader.fieldnames or ['timestamp', 'meid', 'cell_id', 'ue_id', 'node_id']
+            # Ensure node_id is in fieldnames if not already present
+            if 'node_id' not in ue_fieldnames:
+                ue_fieldnames.append('node_id')
     else:
-        ue_fieldnames = ['timestamp', 'meid', 'cell_id', 'ue_id']
+        ue_fieldnames = ['timestamp', 'meid', 'cell_id', 'ue_id', 'node_id']
     
     ue_csv_file = open(CSV_UE_FILE, 'a', newline='')
     ue_csv_writer = csv.DictWriter(ue_csv_file, fieldnames=ue_fieldnames, extrasaction='ignore')
@@ -135,7 +138,7 @@ def write_gnb_csv(timestamp, meid, cell_id, format_type, measurements):
     gnb_csv_writer.writerow(row)
     gnb_csv_file.flush()
 
-def write_ue_csv(timestamp, meid, cell_id, ue_id, measurements):
+def write_ue_csv(timestamp, meid, cell_id, ue_id, measurements, node_id=None):
     """Write UE measurements to CSV"""
     global ue_csv_writer, ue_fieldnames, ue_csv_file
     
@@ -148,6 +151,10 @@ def write_ue_csv(timestamp, meid, cell_id, ue_id, measurements):
         'cell_id': cell_id,
         'ue_id': ue_id
     }
+    
+    # Add node_id if available
+    if node_id is not None:
+        row['node_id'] = node_id
     
     for meas in measurements:
         name = meas.get("name", f"id_{meas.get('id', 'unknown')}")
@@ -203,9 +210,10 @@ def process_kpi_for_csv(msg):
         # Write UE measurements (one row per UE)
         for ue in ues:
             ue_id = ue.get("ueId", "N/A")
+            ue_node_id = ue.get("node_id", None)  # Extract node_id from UE entry (should be 3)
             ue_measurements = [m for m in ue.get("measurements", []) if m.get("value", 0) != 0]
             if ue_measurements:
-                write_ue_csv(timestamp, meid, cell_id, ue_id, ue_measurements)
+                write_ue_csv(timestamp, meid, cell_id, ue_id, ue_measurements, ue_node_id)
     except Exception as e:
         print(f"[RELAY] Error processing KPI for CSV: {e}")
 

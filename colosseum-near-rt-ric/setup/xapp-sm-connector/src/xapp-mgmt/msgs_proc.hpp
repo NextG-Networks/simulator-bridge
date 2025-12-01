@@ -90,7 +90,7 @@ public:
     }
 };
 
-std::string process_ric_indication(int message_type, transaction_identifier id, const void *message_payload, size_t message_len);
-std::string procRicIndication(E2AP_PDU_t *e2apMsg, transaction_identifier gnb_id);
+std::string process_ric_indication(int message_type, transaction_identifier id, const void *message_payload, size_t message_len, const unsigned char* me_id = nullptr);
+std::string procRicIndication(E2AP_PDU_t *e2apMsg, transaction_identifier gnb_id, const std::string& meid_str = "");
 
 #endif /* XAPP_MSG_XAPP_MSG_HPP_ */

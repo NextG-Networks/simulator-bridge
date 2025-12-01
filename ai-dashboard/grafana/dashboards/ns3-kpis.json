@@ -4,7 +4,7 @@
   "timezone": "browser",
   "refresh": "5s",
   "time": {
-    "from": "now-24h",
+    "from": "now-1h",
     "to": "now"
   },
   "panels": [
@@ -12,15 +12,16 @@
       "id": 1,
       "title": "gNB KPIs",
       "type": "timeseries",
-      "datasource": {
-        "type": "influxdb"
-      },
+        "datasource": {
+          "type": "influxdb"
+        },
       "targets": [
         {
-          "query": "from(bucket: \"ns3-kpis\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"_measurement\"] == \"gnb_kpis\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
+          "query": "from(bucket: \"ns3-kpis\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"_measurement\"] == \"gnb_kpis\")",
           "refId": "A",
           "datasource": {
-            "type": "influxdb"
+            "type": "influxdb",
+            "uid": "InfluxDB"
           }
         }
       ],
@@ -50,15 +51,16 @@
       "id": 2,
       "title": "UE KPIs",
       "type": "timeseries",
-      "datasource": {
-        "type": "influxdb"
-      },
+        "datasource": {
+          "type": "influxdb"
+        },
       "targets": [
         {
-          "query": "from(bucket: \"ns3-kpis\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"_measurement\"] == \"ue_kpis\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
+          "query": "from(bucket: \"ns3-kpis\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"_measurement\"] == \"ue_kpis\")",
           "refId": "A",
           "datasource": {
-            "type": "influxdb"
+            "type": "influxdb",
+            "uid": "InfluxDB"
           }
         }
       ],

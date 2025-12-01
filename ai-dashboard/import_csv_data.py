@@ -79,13 +79,25 @@ def import_ue_csv(file_path):
         return 0
     
     print(f"📄 Reading {file_path}...")
-    df = pd.read_csv(file_path)
+    # Read CSV with flexible error handling for inconsistent columns
+    try:
+        df = pd.read_csv(file_path, on_bad_lines='skip', engine='python')
+    except TypeError:
+        # Older pandas versions use error_bad_lines
+        df = pd.read_csv(file_path, error_bad_lines=False, warn_bad_lines=True, engine='python')
     
     if df.empty:
         print("   File is empty")
         return 0
     
     print(f"   Found {len(df)} rows")
+    
+    # Handle node_id column if it exists
+    if 'node_id' not in df.columns:
+        # Check if there's an extra column (unnamed) that might be node_id
+        unnamed_cols = [col for col in df.columns if 'Unnamed' in str(col)]
+        if unnamed_cols:
+            df = df.rename(columns={unnamed_cols[0]: 'node_id'})
     
     points = []
     for idx, row in df.iterrows():
@@ -105,10 +117,12 @@ def import_ue_csv(file_path):
             point.tag("ue_id", str(row['ue_id']))
         if 'cell_id' in row and pd.notna(row['cell_id']) and str(row['cell_id']).upper() != 'N/A':
             point.tag("cell_id", str(row['cell_id']))
+        if 'node_id' in row and pd.notna(row['node_id']):
+            point.tag("node_id", str(int(row['node_id'])))
         
         # Add fields
         for col in df.columns:
-            if col not in ['timestamp', 'ue_id', 'cell_id', 'meid']:
+            if col not in ['timestamp', 'ue_id', 'cell_id', 'meid', 'node_id']:
                 if pd.api.types.is_numeric_dtype(df[col]):
                     if pd.notna(row[col]):
                         point.field(col, float(row[col]))

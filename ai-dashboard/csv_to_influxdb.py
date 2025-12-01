@@ -91,9 +91,14 @@ class CSVHandler(FileSystemEventHandler):
             print(f"[InfluxDB] Error processing gNB CSV: {e}")
     
     def process_ue_csv(self, file_path):
-        """Process UE CSV file and write to InfluxDB"""
+    #"""Process UE CSV file and write to InfluxDB"""
         try:
-            df = pd.read_csv(file_path)
+            # Read CSV with flexible error handling
+            try:
+                df = pd.read_csv(file_path, on_bad_lines='skip', engine='python')
+            except TypeError:
+                df = pd.read_csv(file_path, error_bad_lines=False, warn_bad_lines=True, engine='python')
+            
             if df.empty:
                 return
             
@@ -101,6 +106,12 @@ class CSVHandler(FileSystemEventHandler):
             new_rows = df.iloc[self.last_ue_row:]
             if new_rows.empty:
                 return
+            
+            # Handle node_id column if it exists
+            if 'node_id' not in df.columns:
+                unnamed_cols = [col for col in df.columns if 'Unnamed' in str(col)]
+                if unnamed_cols:
+                    df = df.rename(columns={unnamed_cols[0]: 'node_id'})
             
             points = []
             for _, row in new_rows.iterrows():
@@ -122,10 +133,12 @@ class CSVHandler(FileSystemEventHandler):
                     point.tag("ue_id", str(row['ue_id']))
                 if 'cell_id' in row and pd.notna(row['cell_id']) and str(row['cell_id']).upper() != 'N/A':
                     point.tag("cell_id", str(row['cell_id']))
+                if 'node_id' in row and pd.notna(row['node_id']):
+                    point.tag("node_id", str(int(row['node_id'])))
                 
                 # Add fields (metrics)
                 for col in df.columns:
-                    if col not in ['timestamp', 'ue_id', 'cell_id', 'meid']:
+                    if col not in ['timestamp', 'ue_id', 'cell_id', 'meid', 'node_id']:
                         if pd.api.types.is_numeric_dtype(df[col]):
                             if pd.notna(row[col]):
                                 point.field(col, float(row[col]))

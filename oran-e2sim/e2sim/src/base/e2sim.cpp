@@ -90,7 +90,8 @@ void E2Sim::encode_and_send_sctp_data(E2AP_PDU_t* pdu)
   data.len = e2ap_asn1c_encode_pdu(pdu, &buf);
   memcpy(data.buffer, buf, min(data.len, MAX_SCTP_BUFFER));
 
-  // LOG_I("Send data to client_fd %d", client_fd)
+  // LOG_I("Send data to client_fd %d", client_fd);
+  // LOG_I("SYNS FAN INTE %d", data.len);
   sctp_send_data(client_fd, data);
 }
 
