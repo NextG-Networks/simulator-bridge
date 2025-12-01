@@ -151,9 +151,10 @@ static void SampleAll(const NodeContainer &ueNodes,
   const double alpha = 1.0 - std::exp(-(periodSec / tau));
   gS.ewma = alpha * mbps + (1.0 - alpha) * gS.ewma;
 
-  //
   double pingMs = gS.seenPing ? gS.lastPingMs : 0.0;
-  // Get MCS values from scheduler
+
+
+
   // Get MCS values from scheduler
   uint8_t mcsDl = 255;  // 255 = adaptive/not fixed
   uint8_t mcsUl = 255;
@@ -229,6 +230,9 @@ static void SamplePositions(NodeContainer ueNodes,
 }
 
 // ---------------- Dynamic MCS Logic ----------------
+// Sets the MCS value for the scheduler leaves the mcs as the chosen value for 10 seconds
+// Unless the value have been changed then leave it an extra 5 seconds
+// This is to prevent the scheduler from changing the MCS value if the AI just changed it
 static void ChangeMcs(Ptr<Node> gnb, int mcs)
 {
   Ptr<mmwave::MmWaveEnbNetDevice> enbDev = gnb->GetDevice(0)->GetObject<mmwave::MmWaveEnbNetDevice>();
@@ -310,11 +314,20 @@ static void ScheduleNextMcsEvent(Ptr<Node> gnb, bool nextIsLow)
     int targetMcs = 1 + (rand() % 28);
     ChangeMcs(gnb, targetMcs);
     
-    // Duration: 15 to 25 seconds
-    double waitTime = 15.0 + (rand() % 100) / 10.0;
+    // Duration: 10 seconds
+    double duration = 10.0;
     
-    Simulator::Schedule(Seconds(waitTime), [gnb]() {
-      ScheduleNextMcsEvent(gnb, true); // Go to Low Phase
+    Simulator::Schedule(Seconds(duration), [gnb, targetMcs]() {
+      // Check for AI intervention
+      int currentMcs = GetCurrentMcs(gnb);
+      if (currentMcs != -1 && currentMcs != targetMcs) {
+        NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [Scenario] AI intervention detected (MCS=" << currentMcs << " != " << targetMcs << "). Extending window by 5s.");
+        Simulator::Schedule(Seconds(5.0), [gnb]() {
+          ScheduleNextMcsEvent(gnb, true); // Go to Low Phase
+        });
+      } else {
+        ScheduleNextMcsEvent(gnb, true); // Go to Low Phase
+      }
     });
   }
 }
@@ -508,17 +521,20 @@ Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::SymPerSlot",
   Ptr<MmWavePointToPointEpcHelper> epc = CreateObject<MmWavePointToPointEpcHelper>();
   mmw->SetEpcHelper(epc);
 
-  // Building stuff
-  // // Add a building in the way the signal to the UE
+// ------------------- BUILDING  SIZE ---------------------------------
+  // Add a building in the way the signal to the UE
   // Ptr<Building> b = CreateObject<Building> ();
   // b->SetBoundaries (Box (80.0, 90.0,     
   //                        0.0, 100.0,     
   //                        0.0, 20.0));    
   // b->SetBuildingType (Building::Residential);
   // b->SetExtWallsType (Building::ConcreteWithWindows); 
+
+// ------------------- BUILDING  PATHLOSS -----------------------------
   // mmw->SetPathlossModelType("ns3::HybridBuildingsPropagationLossModel");
-  // mmw->SetChannelConditionModelType("ns3::BuildingsChannelConditionModel"); // Changed from ThreeGppUmi...
-  
+  // mmw->SetChannelConditionModelType("ns3::BuildingsChannelConditionModel");
+// --------------------------------------------------------------------
+
   mmw->SetPathlossModelType("ns3::ThreeGppUmiStreetCanyonPropagationLossModel");
   mmw->SetChannelConditionModelType("ns3::ThreeGppUmiStreetCanyonChannelConditionModel");
   Ptr<Node> pgw = epc->GetPgwNode();
@@ -542,21 +558,24 @@ Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::SymPerSlot",
     m.SetMobilityModel("ns3::ConstantPositionMobilityModel");
     m.Install(gnb);
 
-    // uem.Install(ue);
-    
-    // // Install mobility for building node (static at center of building)
+    // ------------------- BUILDING POSITION -----------------------------    
+    // Install mobility for building node (static at center of building)
     // MobilityHelper buildingMobility;
     // auto buildingPos = CreateObject<ListPositionAllocator>();
     // buildingPos->Add(Vector(85.0, 50.0, 0.0)); // Center of X=[80,90], Y=[0,100]
     // buildingMobility.SetPositionAllocator(buildingPos);
     // buildingMobility.SetMobilityModel("ns3::ConstantPositionMobilityModel");
     // buildingMobility.Install(buildingNode);
-  }   
+    // --------------------------------------------------------------------
+  }
+
+  // ------------------- UE MOBILITY -----------------------------
   MobilityHelper uem;
     uem.SetMobilityModel("ns3::WaypointMobilityModel");
     uem.Install(ue);
 
     Ptr<WaypointMobilityModel> ueMobility = ue.Get(0)->GetObject<WaypointMobilityModel>();
+
 
     double t_cycle = 0.0;
     double cycle_duration = 50.0;
@@ -646,7 +665,7 @@ Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::SymPerSlot",
   srh.GetStaticRouting(rh.Get(0)->GetObject<Ipv4>())
      ->AddNetworkRouteTo(Ipv4Address("7.0.0.0"), Ipv4Mask("255.0.0.0"), 1);
 
-  // ------------- Traffic for throughput & ping (like your first file) -------------
+  // ------------- Traffic for throughput & ping  -------------
   const uint16_t cbrPort = 4000;
   PacketSinkHelper sink("ns3::UdpSocketFactory", InetSocketAddress(Ipv4Address::GetAny(), cbrPort));
   ApplicationContainer sinkApps = sink.Install(ue.Get(0));
@@ -690,9 +709,7 @@ Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::SymPerSlot",
          << " " << ep.x << " " << ep.y << "\n";
   }
 
-  // Timestamped NetAnim file
-  
-  
+
   // Timestamped NetAnim file
   std::time_t t = std::time(nullptr);
   std::tm tm = *std::localtime(&t);
@@ -705,11 +722,11 @@ Config::SetDefault("ns3::MmWaveFlexTtiMacScheduler::SymPerSlot",
   anim.SetMobilityPollInterval(Seconds(1)); // Sample movement every 1 second
   anim.SkipPacketTracing(); // Disable packet tracing to reduce file size
 
-  // Configure building visualization
-  uint32_t buildingImgId = anim.AddResource("/home/hybrid/proj/ns-3-mmwave-oran/scratch/building.png");
-  anim.UpdateNodeImage(buildingNode.Get(0)->GetId(), buildingImgId);
-  anim.UpdateNodeDescription(buildingNode.Get(0), "Building");
-  anim.UpdateNodeSize(buildingNode.Get(0), 10.0, 100.0); // Width=10, Height=100
+  // // Configure building visualization
+  // uint32_t buildingImgId = anim.AddResource("/home/hybrid/proj/ns-3-mmwave-oran/scratch/building.png");
+  // anim.UpdateNodeImage(buildingNode.Get(0)->GetId(), buildingImgId);
+  // anim.UpdateNodeDescription(buildingNode.Get(0), "Building");
+  // anim.UpdateNodeSize(buildingNode.Get(0), 10.0, 100.0); // Width=10, Height=100
   
   // Start the alternating MCS loop (Low -> Random -> Low...)
   // First 5 seconds are Fixed MCS 28 (set by default)
