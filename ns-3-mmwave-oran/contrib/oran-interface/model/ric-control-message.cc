@@ -343,48 +343,81 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
             Ptr<mmwave::MmWaveEnbNetDevice> enbDev = nullptr;
             uint32_t foundNodeId = 0;
             
-            if (hasNodeId && nodeId > 0) {
-                // Try the specified node first
-                if (nodeId < NodeList::GetNNodes()) {
-                    Ptr<Node> n = NodeList::GetNode(nodeId);
-                    if (n) {
-                        for (uint32_t i = 0; i < n->GetNDevices(); ++i) {
-                            enbDev = n->GetDevice(i)->GetObject<mmwave::MmWaveEnbNetDevice>();
-                            if (enbDev) {
-                                foundNodeId = nodeId;
-                                break;
+            try {
+                if (hasNodeId && nodeId > 0) {
+                    // Try the specified node first
+                    if (nodeId < NodeList::GetNNodes()) {
+                        Ptr<Node> n = NodeList::GetNode(nodeId);
+                        if (n) {
+                            for (uint32_t i = 0; i < n->GetNDevices(); ++i) {
+                                Ptr<NetDevice> dev = n->GetDevice(i);
+                                if (!dev) continue;
+                                enbDev = dev->GetObject<mmwave::MmWaveEnbNetDevice>();
+                                if (enbDev) {
+                                    foundNodeId = nodeId;
+                                    break;
+                                }
                             }
                         }
                     }
                 }
-            }
-            
-            // If not found and nodeId was specified, or if nodeId wasn't specified, search all nodes
-            if (!enbDev) {
-                for (uint32_t i = 0; i < NodeList::GetNNodes(); ++i) {
-                    Ptr<Node> n = NodeList::GetNode(i);
-                    if (!n) continue;
-                    
-                    for (uint32_t j = 0; j < n->GetNDevices(); ++j) {
-                        enbDev = n->GetDevice(j)->GetObject<mmwave::MmWaveEnbNetDevice>();
-                        if (enbDev) {
-                            foundNodeId = i;
-                            break;
+                
+                // If not found and nodeId was specified, or if nodeId wasn't specified, search all nodes
+                if (!enbDev) {
+                    for (uint32_t i = 0; i < NodeList::GetNNodes(); ++i) {
+                        Ptr<Node> n = NodeList::GetNode(i);
+                        if (!n) continue;
+                        
+                        for (uint32_t j = 0; j < n->GetNDevices(); ++j) {
+                            Ptr<NetDevice> dev = n->GetDevice(j);
+                            if (!dev) continue;
+                            enbDev = dev->GetObject<mmwave::MmWaveEnbNetDevice>();
+                            if (enbDev) {
+                                foundNodeId = i;
+                                break;
+                            }
                         }
+                        if (enbDev) break;
                     }
-                    if (enbDev) break;
                 }
+                
+                if (!enbDev) {
+                    fprintf(stderr, "[RicControlMessage] set-bandwidth: no MmWaveEnbNetDevice found in any node\n");
+                    fflush(stderr);
+                    return;
+                }
+                
+                // Validate bandwidth value
+                if (bandwidth == 0) {
+                    fprintf(stderr, "[RicControlMessage] set-bandwidth: warning - bandwidth is 0, this may be invalid\n");
+                    fflush(stderr);
+                }
+                
+                // Set bandwidth with error handling
+                // Note: SetBandwidth may need to be called at a specific time in the simulation
+                // If it crashes, the device might not be fully initialized yet
+                fprintf(stderr, "[RicControlMessage] set-bandwidth: attempting to set bandwidth to %u on node %u\n", bandwidth, foundNodeId);
+                fflush(stderr);
+                
+                // Directly call SetBandwidth - it's a simple member variable assignment
+                // If this crashes, it's likely a memory corruption or the object is invalid
+                enbDev->SetBandwidth(bandwidth);
+                
+                fprintf(stderr, "[RicControlMessage] set-bandwidth: SetBandwidth call succeeded\n");
+                fflush(stderr);
+                
+                // Verify the value was set
+                uint8_t bandwidth2 = enbDev->GetBandwidth();
+                
+                fprintf(stderr, "[RicControlMessage] set-bandwidth: node %u bandwidth set to %u (confirmed %u)\n", foundNodeId, bandwidth, bandwidth2);
+                fflush(stderr);
+            } catch (const std::exception& e) {
+                fprintf(stderr, "[RicControlMessage] set-bandwidth: exception in lambda: %s\n", e.what());
+                fflush(stderr);
+            } catch (...) {
+                fprintf(stderr, "[RicControlMessage] set-bandwidth: unknown exception in lambda\n");
+                fflush(stderr);
             }
-            
-            if (!enbDev) {
-                fprintf(stderr, "[RicControlMessage] set-bandwidth: no MmWaveEnbNetDevice found in any node\n");
-                return;
-            }
-            
-            // Set bandwidth
-            enbDev->SetBandwidth(bandwidth);
-            uint8_t bandwidth2 = enbDev->GetBandwidth();
-            fprintf(stderr, "[RicControlMessage] set-bandwidth: node %u bandwidth set to %u (confirmed %u)\n", foundNodeId, bandwidth, bandwidth2);
         });
         return;
     }
