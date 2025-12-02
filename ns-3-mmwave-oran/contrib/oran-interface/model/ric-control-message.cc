@@ -37,6 +37,7 @@
 // #include "control-gateway.h" // Might not be needed for V2 standalone
 #include <ns3/mmwave-enb-net-device.h>
 #include <ns3/mmwave-enb-mac.h>
+#include <ns3/mmwave-component-carrier-enb.h>
 #include <ns3/onoff-application.h>
 #include <ns3/data-rate.h>
 #include <ns3/mmwave-flex-tti-mac-scheduler.h>
@@ -238,14 +239,17 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
                 return;
             }
             
-            Ptr<mmwave::MmWaveEnbNetDevice> enbDev;
+            Ptr<mmwave::MmWaveEnbNetDevice> enbDev = nullptr;
             for (uint32_t i = 0; i < n->GetNDevices(); ++i) {
-                enbDev = n->GetDevice(i)->GetObject<mmwave::MmWaveEnbNetDevice>();
+                Ptr<NetDevice> dev = n->GetDevice(i);
+                if (!dev) continue;
+                enbDev = dev->GetObject<mmwave::MmWaveEnbNetDevice>();
                 if (enbDev) break;
             }
             
             if (!enbDev) {
                 fprintf(stderr, "[RicControlMessage] handover-trigger: node %u has no MmWaveEnbNetDevice\n", nodeId);
+                fflush(stderr);
                 return;
             }
 
@@ -282,38 +286,110 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
         ns3::Simulator::ScheduleNow([nodeId, mcs]() {
             using namespace ns3;
             
-            // Find the mmWave eNB device for this node
-            if (nodeId >= NodeList::GetNNodes()) {
-                fprintf(stderr, "[RicControlMessage] set-mcs: node %u does not exist\n", nodeId);
-                return;
-            }
-            
-            Ptr<Node> n = NodeList::GetNode(nodeId);
-            if (!n) {
-                fprintf(stderr, "[RicControlMessage] set-mcs: node %u not found\n", nodeId);
-                return;
-            }
-            
-            // Find MmWaveEnbNetDevice
-            Ptr<mmwave::MmWaveEnbNetDevice> enbDev;
-            for (uint32_t i = 0; i < n->GetNDevices(); ++i) {
-                enbDev = n->GetDevice(i)->GetObject<mmwave::MmWaveEnbNetDevice>();
-                if (enbDev) break;
-            }
-            
-            if (!enbDev) {
-                fprintf(stderr, "[RicControlMessage] set-mcs: node %u has no MmWaveEnbNetDevice\n", nodeId);
-                return;
-            }
-            
-            // Set MCS via MAC layer
-            Ptr<mmwave::MmWaveEnbMac> mac = enbDev->GetMac();
-            if (mac) {
-                mac->SetMcs(mcs);
-                fprintf(stderr, "[RicControlMessage] set-mcs: node %u MCS set to %d\n", nodeId, mcs);
+            try {
+                // Find the mmWave eNB device for this node
+                if (nodeId >= NodeList::GetNNodes()) {
+                    fprintf(stderr, "[RicControlMessage] set-mcs: node %u does not exist\n", nodeId);
+                    fflush(stderr);
+                    return;
+                }
+                
+                Ptr<Node> n = NodeList::GetNode(nodeId);
+                if (!n) {
+                    fprintf(stderr, "[RicControlMessage] set-mcs: node %u not found\n", nodeId);
+                    fflush(stderr);
+                    return;
+                }
+                
+                // Find MmWaveEnbNetDevice
+                Ptr<mmwave::MmWaveEnbNetDevice> enbDev = nullptr;
+                for (uint32_t i = 0; i < n->GetNDevices(); ++i) {
+                    Ptr<NetDevice> dev = n->GetDevice(i);
+                    if (!dev) continue;
+                    enbDev = dev->GetObject<mmwave::MmWaveEnbNetDevice>();
+                    if (enbDev) break;
+                }
+                
+                if (!enbDev) {
+                    fprintf(stderr, "[RicControlMessage] set-mcs: node %u has no MmWaveEnbNetDevice\n", nodeId);
+                    fflush(stderr);
+                    return;
+                }
+                
+                // Get component carrier map
+                std::map<uint8_t, Ptr<mmwave::MmWaveComponentCarrier>> ccMap = enbDev->GetCcMap();
+                if (ccMap.empty()) {
+                    fprintf(stderr, "[RicControlMessage] set-mcs: node %u has empty CC map\n", nodeId);
+                    fflush(stderr);
+                    return;
+                }
+                
+                // Get a valid component carrier safely (prefer key 0 but fall back to first)
+                std::map<uint8_t, Ptr<mmwave::MmWaveComponentCarrier>>::iterator ccIt = ccMap.find(0);
+                if (ccIt == ccMap.end())
+                  {
+                    ccIt = ccMap.begin();
+                  }
+
+                if (ccIt == ccMap.end() || !(ccIt->second))
+                  {
+                    fprintf(stderr,
+                            "[RicControlMessage] set-mcs: node %u has no valid component carrier entry\n",
+                            nodeId);
+                    fflush(stderr);
+                    return;
+                  }
+
+                Ptr<mmwave::MmWaveComponentCarrierEnb> cc =
+                  DynamicCast<mmwave::MmWaveComponentCarrierEnb>(ccIt->second);
+                if (!cc)
+                  {
+                    fprintf(stderr,
+                            "[RicControlMessage] set-mcs: node %u component carrier is not MmWaveComponentCarrierEnb\n",
+                            nodeId);
+                    fflush(stderr);
+                    return;
+                  }
+                
+                // Get the MAC scheduler
+                Ptr<mmwave::MmWaveMacScheduler> sched = cc->GetMacScheduler();
+                if (!sched) {
+                    fprintf(stderr, "[RicControlMessage] set-mcs: node %u has no MAC scheduler\n", nodeId);
+                    fflush(stderr);
+                    return;
+                }
+                
+                // Cast to FlexTti scheduler to access MCS attributes
+                Ptr<mmwave::MmWaveFlexTtiMacScheduler> flexSched = 
+                    DynamicCast<mmwave::MmWaveFlexTtiMacScheduler>(sched);
+                if (!flexSched) {
+                    fprintf(stderr, "[RicControlMessage] set-mcs: node %u scheduler is not FlexTti type\n", nodeId);
+                    fflush(stderr);
+                    return;
+                }
+                
+                fprintf(stderr, "[RicControlMessage] set-mcs: attempting to set MCS to %d on node %u\n", mcs, nodeId);
                 fflush(stderr);
-            } else {
-                fprintf(stderr, "[RicControlMessage] set-mcs: node %u has no MAC layer\n", nodeId);
+                
+                // Set MCS via scheduler attributes (same approach as our-v3.cc)
+                if (mcs >= 0 && mcs <= 28) {
+                    flexSched->SetAttribute("FixedMcsDl", BooleanValue(true));
+                    flexSched->SetAttribute("McsDefaultDl", UintegerValue(mcs));
+                    flexSched->SetAttribute("FixedMcsUl", BooleanValue(true));
+                    flexSched->SetAttribute("McsDefaultUl", UintegerValue(mcs));
+                    fprintf(stderr, "[RicControlMessage] set-mcs: node %u MCS set to %d (DL and UL)\n", nodeId, mcs);
+                    fflush(stderr);
+                } else {
+                    flexSched->SetAttribute("FixedMcsDl", BooleanValue(false));
+                    flexSched->SetAttribute("FixedMcsUl", BooleanValue(false));
+                    fprintf(stderr, "[RicControlMessage] set-mcs: node %u adaptive MCS restored\n", nodeId);
+                    fflush(stderr);
+                }
+            } catch (const std::exception& e) {
+                fprintf(stderr, "[RicControlMessage] set-mcs: exception in lambda: %s\n", e.what());
+                fflush(stderr);
+            } catch (...) {
+                fprintf(stderr, "[RicControlMessage] set-mcs: unknown exception in lambda\n");
                 fflush(stderr);
             }
         });
@@ -550,46 +626,89 @@ RicControlMessage::ApplySimpleCommand(const std::string& json)
         ns3::Simulator::ScheduleNow([nodeId, txPowerDbm]() {
             using namespace ns3;
 
-            if (nodeId >= NodeList::GetNNodes()) {
+            try {
+                if (nodeId >= NodeList::GetNNodes()) {
+                    fprintf(stderr,
+                        "[RicControlMessage] set-enb-txpower: node %u does not exist\n",
+                        nodeId);
+                    fflush(stderr);
+                    return;
+                }
+
+                Ptr<Node> n = NodeList::GetNode(nodeId);
+                if (!n) {
+                    fprintf(stderr,
+                        "[RicControlMessage] set-enb-txpower: node %u not found\n",
+                        nodeId);
+                    fflush(stderr);
+                    return;
+                }
+
+                Ptr<mmwave::MmWaveEnbNetDevice> enbDev = nullptr;
+                for (uint32_t i = 0; i < n->GetNDevices(); ++i) {
+                    Ptr<NetDevice> dev = n->GetDevice(i);
+                    if (!dev) continue;
+                    enbDev = dev->GetObject<mmwave::MmWaveEnbNetDevice>();
+                    if (enbDev) break;
+                }
+
+                if (!enbDev) {
+                    fprintf(stderr,
+                        "[RicControlMessage] set-enb-txpower: node %u has no MmWaveEnbNetDevice\n",
+                        nodeId);
+                    fflush(stderr);
+                    return;
+                }
+
+                // Get PHY through component carrier (safer approach)
+                std::map<uint8_t, Ptr<mmwave::MmWaveComponentCarrier>> ccMap = enbDev->GetCcMap();
+                if (ccMap.empty()) {
+                    fprintf(stderr,
+                        "[RicControlMessage] set-enb-txpower: node %u has empty CC map\n",
+                        nodeId);
+                    fflush(stderr);
+                    return;
+                }
+                
+                // Get the first component carrier (usually index 0)
+                Ptr<mmwave::MmWaveComponentCarrierEnb> cc = 
+                    DynamicCast<mmwave::MmWaveComponentCarrierEnb>(ccMap.at(0));
+                if (!cc) {
+                    fprintf(stderr,
+                        "[RicControlMessage] set-enb-txpower: node %u component carrier is not MmWaveComponentCarrierEnb\n",
+                        nodeId);
+                    fflush(stderr);
+                    return;
+                }
+                
+                Ptr<mmwave::MmWaveEnbPhy> phy = cc->GetPhy();
+                if (!phy) {
+                    fprintf(stderr,
+                        "[RicControlMessage] set-enb-txpower: node %u has no PHY\n",
+                        nodeId);
+                    fflush(stderr);
+                    return;
+                }
+
                 fprintf(stderr,
-                    "[RicControlMessage] set-enb-txpower: node %u does not exist\n",
-                    nodeId);
-                return;
-            }
+                    "[RicControlMessage] set-enb-txpower: attempting to set TxPower to %.2f dBm on node %u\n",
+                    txPowerDbm, nodeId);
+                fflush(stderr);
 
-            Ptr<Node> n = NodeList::GetNode(nodeId);
-            if (!n) {
+                // Use SetAttribute instead of direct method call (safer, matches LTE code pattern)
+                phy->SetAttribute("TxPower", DoubleValue(txPowerDbm));
+                
                 fprintf(stderr,
-                    "[RicControlMessage] set-enb-txpower: node %u not found\n",
-                    nodeId);
-                return;
+                    "[RicControlMessage] set-enb-txpower: node %u TxPower set to %.2f dBm\n",
+                    nodeId, txPowerDbm);
+                fflush(stderr);
+            } catch (const std::exception& e) {
+                fprintf(stderr, "[RicControlMessage] set-enb-txpower: exception in lambda: %s\n", e.what());
+                fflush(stderr);
+            } catch (...) {
+                fprintf(stderr, "[RicControlMessage] set-enb-txpower: unknown exception in lambda\n");
+                fflush(stderr);
             }
-
-            Ptr<mmwave::MmWaveEnbNetDevice> enbDev;
-            for (uint32_t i = 0; i < n->GetNDevices(); ++i) {
-                enbDev = n->GetDevice(i)->GetObject<mmwave::MmWaveEnbNetDevice>();
-                if (enbDev) break;
-            }
-
-            if (!enbDev) {
-                fprintf(stderr,
-                    "[RicControlMessage] set-enb-txpower: node %u has no MmWaveEnbNetDevice\n",
-                    nodeId);
-                return;
-            }
-
-            Ptr<mmwave::MmWaveEnbPhy> phy = enbDev->GetPhy();
-            if (!phy) {
-                fprintf(stderr,
-                    "[RicControlMessage] set-enb-txpower: node %u has no PHY\n",
-                    nodeId);
-                return;
-            }
-
-            phy->SetTxPower(txPowerDbm);
-            fprintf(stderr,
-                "[RicControlMessage] set-enb-txpower: node %u TxPower set to %.2f dBm\n",
-                nodeId, txPowerDbm);
         });
         return;
     }
