@@ -28,6 +28,8 @@
  #include <thread>
  #include <string>
  #include <cctype>
+ #include <map>
+ #include <mutex>
  // #include "xapp.hpp"
  
  #include "ai_tcp_client.h"
@@ -347,6 +349,12 @@
   * Handle RIC indication
   * Returns decoded JSON string if successful, empty string otherwise
   */
+ // Static map to maintain stable ueId -> node_id mapping across messages
+ // This ensures the same UE always gets the same node_id, regardless of array order
+ static std::map<std::string, int> g_ueId_to_nodeId;
+ static int g_next_ue_node_id = 3; // UEs start at node 3 (gNB is node 2)
+ static std::mutex g_ue_map_mutex;
+
  std::string procRicIndication(E2AP_PDU_t *e2apMsg, transaction_identifier gnb_id, const std::string& meid_str)
  {
 	uint8_t idx;
@@ -552,8 +560,14 @@
 						 if (kpm->present == E2SM_KPM_IndicationMessage_PR_indicationMessage_Format1) {
 							 E2SM_KPM_IndicationMessage_Format1_t* f1 = kpm->choice.indicationMessage_Format1;
 							 if (f1) {
-								 // Helper function to extract node_id from MEID or cell_id
-								 auto extract_node_id = [&meid_str](const std::string& cell_id) -> int {
+						 // Helper function to extract *gNB* node_id from MEID or cell_id.
+						 // NOTE: This is a best‑effort heuristic, because the true ns-3 NodeId is
+						 // not carried explicitly in the KPM message. For the current ns-3
+						 // scenario (single gNB + multiple UEs), node 2 is the gNB and nodes
+						 // 3,4,... are UEs. If the scenario topology changes, this mapping
+						 // should be updated in a single place instead of hard‑coding IDs
+						 // throughout the code.
+						 auto extract_node_id = [&meid_str](const std::string& cell_id) -> int {
 									 // First, try to extract from MEID (most reliable)
 									 if (!meid_str.empty()) {
 										 // MEID format: "gnb:131-133-31000000" -> node 2 (gNB)
@@ -642,18 +656,21 @@
 								 // Extract per-UE measurements from list_of_matched_UEs
 								 if (f1->list_of_matched_UEs && f1->list_of_matched_UEs->list.count > 0) {
 									 json += ",\"ues\":[";
+									 
+									 // Use stable mapping: ueId -> node_id
+									 // This ensures the same UE always gets the same node_id,
+									 // regardless of the order in list_of_matched_UEs.
+									 // In ns-3: gNB is node 2, UEs start at node 3.
+									 
 									 for (size_t i = 0; i < f1->list_of_matched_UEs->list.count; i++) {
 										 PerUE_PM_Item_t* ue_item = f1->list_of_matched_UEs->list.array[i];
 										 if (ue_item) {
 											 if (i > 0) json += ",";
 											 json += "{";
 											 
-											 // Add node_id = 3 for UE measurements
-											 json += "\"node_id\":3";
-											 
-											 // Extract UE ID
+											 // Extract UE ID first (needed for stable mapping)
+											 std::string ue_id_hex;
 											 if (ue_item->ueId.buf && ue_item->ueId.size > 0) {
-												 std::string ue_id_hex;
 												 ue_id_hex.reserve(ue_item->ueId.size * 2);
 												 static const char* hex_chars = "0123456789abcdef";
 												 for (size_t j = 0; j < ue_item->ueId.size; j++) {
@@ -661,8 +678,32 @@
 													 ue_id_hex += hex_chars[(c >> 4) & 0xF];
 													 ue_id_hex += hex_chars[c & 0xF];
 												 }
-												 json += ",\"ueId\":\"" + ue_id_hex + "\"";
+												 json += "\"ueId\":\"" + ue_id_hex + "\"";
 											 }
+											 
+											 // Get or assign stable node_id for this ueId
+											 int ue_node_id = -1;
+											 if (!ue_id_hex.empty()) {
+												 std::lock_guard<std::mutex> lock(g_ue_map_mutex);
+												 auto it = g_ueId_to_nodeId.find(ue_id_hex);
+												 if (it != g_ueId_to_nodeId.end()) {
+													 // This UE was seen before, use existing node_id
+													 ue_node_id = it->second;
+												 } else {
+													 // First time seeing this UE, assign next available node_id
+													 ue_node_id = g_next_ue_node_id++;
+													 g_ueId_to_nodeId[ue_id_hex] = ue_node_id;
+													 mdclog_write(MDCLOG_INFO, "Mapped new UE ueId=%s to node_id=%d", 
+																  ue_id_hex.c_str(), ue_node_id);
+												 }
+											 } else {
+												 // Fallback: use index-based assignment if ueId is missing
+												 ue_node_id = 3 + static_cast<int>(i);
+												 mdclog_write(MDCLOG_WARN, "UE entry %zu has no ueId, using fallback node_id=%d", 
+															  i, ue_node_id);
+											 }
+											 
+											 json += ",\"node_id\":" + std::to_string(ue_node_id);
 											 
 											 // Extract per-UE measurements
 											 if (ue_item->list_of_PM_Information && ue_item->list_of_PM_Information->list.count > 0) {

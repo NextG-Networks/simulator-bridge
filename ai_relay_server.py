@@ -16,6 +16,7 @@ import time
 import sys
 import os
 import csv
+import subprocess
 from datetime import datetime
 
 # Configuration
@@ -500,9 +501,32 @@ def handle_command_interface(conn, addr):
     finally:
         conn.close()
 
+def check_port_in_use(port):
+    """Check if a port is already in use and return PID if found"""
+    try:
+        # Try using lsof first
+        result = subprocess.run(
+            ['lsof', '-ti', f':{port}'],
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            pids = result.stdout.strip().split('\n')
+            return pids[0] if pids else None
+    except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
+        pass
+    return None
+
 def command_interface_server():
     """Run TCP server for command interface on separate port (5002)"""
     try:
+        # Check if port is in use
+        pid = check_port_in_use(CMD_INTERFACE_PORT)
+        if pid:
+            print(f"[RELAY] ⚠️  Port {CMD_INTERFACE_PORT} is already in use by process {pid}")
+            print(f"[RELAY]    Run './stop_relay.sh' to stop the existing relay server")
+        
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind((XAPP_LISTEN_HOST, CMD_INTERFACE_PORT))
@@ -511,6 +535,20 @@ def command_interface_server():
             while True:
                 conn, addr = s.accept()
                 threading.Thread(target=handle_command_interface, args=(conn, addr), daemon=True).start()
+    except OSError as e:
+        if e.errno == 98 or "Address already in use" in str(e):
+            pid = check_port_in_use(CMD_INTERFACE_PORT)
+            print(f"[RELAY] ❌ Port {CMD_INTERFACE_PORT} is already in use")
+            if pid:
+                print(f"[RELAY]    Process {pid} is using the port")
+                print(f"[RELAY]    Run './stop_relay.sh' to stop it, or kill it manually: kill {pid}")
+            else:
+                print(f"[RELAY]    Run './stop_relay.sh' to stop any existing relay server")
+            sys.exit(1)
+        else:
+            print(f"[RELAY] ❌ Command interface server error: {e}")
+            import traceback
+            traceback.print_exc()
     except Exception as e:
         print(f"[RELAY] ❌ Command interface server error: {e}")
         import traceback
@@ -544,6 +582,12 @@ def main():
     time.sleep(1)
     
     try:
+        # Check if port is in use
+        pid = check_port_in_use(XAPP_LISTEN_PORT)
+        if pid:
+            print(f"[RELAY] ⚠️  Port {XAPP_LISTEN_PORT} is already in use by process {pid}")
+            print(f"[RELAY]    Run './stop_relay.sh' to stop the existing relay server")
+        
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind((XAPP_LISTEN_HOST, XAPP_LISTEN_PORT))
@@ -558,6 +602,22 @@ def main():
     except KeyboardInterrupt:
         print("\n[RELAY] Shutting down...")
         close_csv_files()
+    except OSError as e:
+        if e.errno == 98 or "Address already in use" in str(e):
+            pid = check_port_in_use(XAPP_LISTEN_PORT)
+            print(f"[RELAY] ❌ Port {XAPP_LISTEN_PORT} is already in use")
+            if pid:
+                print(f"[RELAY]    Process {pid} is using the port")
+                print(f"[RELAY]    Run './stop_relay.sh' to stop it, or kill it manually: kill {pid}")
+            else:
+                print(f"[RELAY]    Run './stop_relay.sh' to stop any existing relay server")
+            close_csv_files()
+            sys.exit(1)
+        else:
+            print(f"[RELAY] ❌ Server error: {e}")
+            import traceback
+            traceback.print_exc()
+            close_csv_files()
     except Exception as e:
         print(f"[RELAY] ❌ Server error: {e}")
         import traceback

@@ -37,7 +37,7 @@ NS_LOG_COMPONENT_DEFINE("MVS_Mmwave_1gNB_1UE_v3");
 
 // ---------------- Runtime flags ----------------
 static GlobalValue g_simTime("simTime", "Simulation time (s)",
-  DoubleValue(100.0), MakeDoubleChecker<double>(1.0, 3600.0));
+  DoubleValue(3599.0), MakeDoubleChecker<double>(1.0, 3600.0));
 static GlobalValue g_outDir("outDir", "Output directory",
   StringValue("out/logs"), MakeStringChecker());
 
@@ -256,7 +256,7 @@ static void ScheduleNextMcsEvent(Ptr<Node> gnb, bool nextIsLow)
   if (nextIsLow) {
     int targetMcs = 4 + (rand() % 6); 
     ChangeMcs(gnb, targetMcs);
-    double duration = 10.0;
+    double duration = 60.0;
     std::cerr << "\n"
               << "╔════════════════════════════════════════════════════════════╗\n"
               << "║  [EVENT] MCS DEGRADATION TRIGGERED                        ║\n"
@@ -289,7 +289,7 @@ static void ScheduleNextMcsEvent(Ptr<Node> gnb, bool nextIsLow)
   } else {
     int targetMcs = 1 + (rand() % 28);
     ChangeMcs(gnb, targetMcs);
-    double duration = 10.0;
+    double duration = 60.0; 
     std::cerr << "\n"
               << "╔════════════════════════════════════════════════════════════╗\n"
               << "║  [EVENT] MCS RANDOMIZATION TRIGGERED                      ║\n"
@@ -533,7 +533,7 @@ int main (int argc, char** argv)
   Ptr<Node> pgw = epc->GetPgwNode();
 
   NodeContainer gnb; gnb.Create(1);
-  NodeContainer ue;  ue.Create(1);
+  NodeContainer ue;  ue.Create(2);
   NodeContainer rh;  rh.Create(1);
 
   InternetStackHelper ip; ip.Install(ue); ip.Install(rh);
@@ -631,8 +631,8 @@ int main (int argc, char** argv)
   Simulator::Schedule(Seconds(5.0), &ScheduleNextMcsEvent, gnb.Get(0), true);
 
   // Schedule NEW Random Events
-  Simulator::Schedule(Seconds(12.0), &RandomBlockageEvent, ue, gnb.Get(0));
-  Simulator::Schedule(Seconds(18.0), &TrafficSpikeEvent, rh);
+  //Simulator::Schedule(Seconds(12.0), &RandomBlockageEvent, ue, gnb.Get(0));
+  //Simulator::Schedule(Seconds(18.0), &TrafficSpikeEvent, rh);
 
   Simulator::Stop(Seconds(simTime));
   Simulator::Run();

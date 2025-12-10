@@ -228,18 +228,41 @@ start_relay_server() {
     
     log_info "Starting AI Relay Server..."
     
-    # Check if port 5000 is already in use
+    # Check if ports are already in use and try to kill relay server processes
+    local port_conflict=false
     if command -v lsof &> /dev/null; then
-        if lsof -Pi :5000 -sTCP:LISTEN -t >/dev/null 2>&1; then
-            log_warning "Port 5000 is already in use. Another process may be using it."
-            if [ "$NON_INTERACTIVE" = false ]; then
-                read -p "Continue anyway? (y/N): " -n 1 -r
-                echo
-                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                    log_error "Aborted. Please free port 5000 or stop the conflicting process."
-                    return 1
-                fi
+        for port in 5000 5002; do
+            local pids=$(lsof -ti :$port 2>/dev/null || true)
+            if [ -n "$pids" ]; then
+                for pid in $pids; do
+                    if ps -p "$pid" > /dev/null 2>&1; then
+                        local cmd=$(ps -p "$pid" -o cmd= 2>/dev/null || echo "")
+                        if echo "$cmd" | grep -q "ai_relay_server.py"; then
+                            log_warning "Port $port is in use by relay server (PID: $pid). Stopping it..."
+                            stop_relay_server
+                            sleep 1
+                        else
+                            log_warning "Port $port is in use by another process (PID: $pid)"
+                            log_info "Command: $cmd"
+                            port_conflict=true
+                        fi
+                    fi
+                done
             fi
+        done
+    fi
+    
+    # If there's a port conflict with a non-relay process, ask user
+    if [ "$port_conflict" = true ]; then
+        if [ "$NON_INTERACTIVE" = false ]; then
+            read -p "Continue anyway? (y/N): " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                log_error "Aborted. Please free ports 5000/5002 or stop the conflicting process."
+                return 1
+            fi
+        else
+            log_warning "Non-interactive mode: Continuing despite port conflict"
         fi
     fi
     
@@ -263,18 +286,107 @@ start_relay_server() {
 }
 
 stop_relay_server() {
+    local killed_any=false
+    
+    # Method 1: Use PID file if it exists
     if [ -f "$RELAY_PID_FILE" ]; then
-        local pid=$(cat "$RELAY_PID_FILE")
-        if ps -p "$pid" > /dev/null 2>&1; then
-            log_info "Stopping relay server (PID: $pid)..."
-            kill "$pid" 2>/dev/null || true
-            sleep 1
-            # Force kill if still running
-            if ps -p "$pid" > /dev/null 2>&1; then
-                kill -9 "$pid" 2>/dev/null || true
+        local pid=$(cat "$RELAY_PID_FILE" 2>/dev/null)
+        if [ -n "$pid" ] && ps -p "$pid" > /dev/null 2>&1; then
+            # Check if it's actually the relay server
+            if ps -p "$pid" -o cmd= | grep -q "ai_relay_server.py"; then
+                log_info "Stopping relay server (PID: $pid) from PID file..."
+                kill "$pid" 2>/dev/null || true
+                sleep 1
+                # Force kill if still running
+                if ps -p "$pid" > /dev/null 2>&1; then
+                    log_info "Force killing process $pid..."
+                    kill -9 "$pid" 2>/dev/null || true
+                fi
+                log_success "Stopped relay server (PID: $pid)"
+                killed_any=true
+            else
+                log_warning "PID file contains PID $pid, but it's not the relay server. Cleaning up PID file."
             fi
+        else
+            log_info "PID file exists but process is not running. Cleaning up PID file."
         fi
         rm -f "$RELAY_PID_FILE"
+    fi
+    
+    # Method 2: Find processes by name (most reliable)
+    if command -v pgrep &> /dev/null; then
+        local pids_by_name=$(pgrep -f "ai_relay_server.py" 2>/dev/null || true)
+        if [ -n "$pids_by_name" ]; then
+            log_info "Found relay server processes by name: $pids_by_name"
+            for pid in $pids_by_name; do
+                if ps -p "$pid" > /dev/null 2>&1; then
+                    log_info "Killing relay server process (PID: $pid)..."
+                    kill "$pid" 2>/dev/null || true
+                    sleep 1
+                    if ps -p "$pid" > /dev/null 2>&1; then
+                        log_info "Force killing process $pid..."
+                        kill -9 "$pid" 2>/dev/null || true
+                    fi
+                    log_success "Stopped relay server (PID: $pid)"
+                    killed_any=true
+                fi
+            done
+        fi
+    fi
+    
+    # Method 3: Find and kill processes using ports 5000 or 5002
+    if command -v lsof &> /dev/null; then
+        # Check each port separately
+        for port in 5000 5002; do
+            local pids=$(lsof -ti :$port 2>/dev/null || true)
+            if [ -n "$pids" ]; then
+                log_info "Found processes using port $port: $pids"
+                for pid in $pids; do
+                    if ps -p "$pid" > /dev/null 2>&1; then
+                        local cmd=$(ps -p "$pid" -o cmd= 2>/dev/null || echo "")
+                        if echo "$cmd" | grep -q "ai_relay_server.py"; then
+                            log_info "Killing relay server process (PID: $pid) using port $port..."
+                            kill "$pid" 2>/dev/null || true
+                            sleep 1
+                            if ps -p "$pid" > /dev/null 2>&1; then
+                                log_info "Force killing process $pid..."
+                                kill -9 "$pid" 2>/dev/null || true
+                            fi
+                            log_success "Stopped relay server (PID: $pid)"
+                            killed_any=true
+                        else
+                            log_warning "Process $pid is using port $port but doesn't appear to be the relay server"
+                            log_info "Command: $cmd"
+                            # In non-interactive mode, don't ask, just log
+                            if [ "$NON_INTERACTIVE" = false ]; then
+                                read -p "Kill it anyway? (y/N): " -n 1 -r
+                                echo
+                                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                                    kill "$pid" 2>/dev/null || true
+                                    sleep 1
+                                    if ps -p "$pid" > /dev/null 2>&1; then
+                                        kill -9 "$pid" 2>/dev/null || true
+                                    fi
+                                    log_success "Killed process $pid"
+                                    killed_any=true
+                                fi
+                            else
+                                log_info "Non-interactive mode: Skipping non-relay process $pid"
+                            fi
+                        fi
+                    fi
+                done
+            fi
+        done
+    elif command -v fuser &> /dev/null; then
+        # Alternative using fuser
+        log_info "Using fuser to kill processes on ports 5000/5002..."
+        fuser -k 5000/tcp 5002/tcp 2>/dev/null || true
+        killed_any=true
+    fi
+    
+    if [ "$killed_any" = false ]; then
+        log_info "No relay server processes found running."
     fi
 }
 

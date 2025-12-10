@@ -13,6 +13,7 @@ pip3 install -r requirements_dashboard.txt
 ```
 
 **Why pip?**
+
 - ✅ Latest versions of packages
 - ✅ All Python packages available
 - ✅ Standard Python package management
@@ -35,6 +36,7 @@ sudo apt install python3-pandas python3-plotly
 ```
 
 **Why not apt?**
+
 - ❌ Streamlit is usually NOT in system repos
 - ❌ Older versions (often 1-2 years behind)
 - ❌ Missing features and bug fixes
@@ -57,7 +59,7 @@ source dashboard_env/bin/activate
 pip install streamlit pandas plotly
 
 # Run dashboard
-streamlit run kpi_dashboard.py
+pip install streamlit pandas plotly
 
 # Deactivate when done
 deactivate
@@ -92,18 +94,21 @@ echo "Run: streamlit run kpi_dashboard.py"
 ## Troubleshooting
 
 ### Permission errors with pip
+
 ```bash
 # Use --user flag to install in user directory
 pip3 install --user streamlit pandas plotly
 ```
 
 ### pip not found
+
 ```bash
 sudo apt update
 sudo apt install python3-pip
 ```
 
 ### Import errors after installation
+
 ```bash
 # Make sure you're using the same Python that has packages
 python3 -m pip install streamlit pandas plotly
@@ -115,9 +120,9 @@ python3 -m streamlit run kpi_dashboard.py
 ## Summary
 
 **For this dashboard, use:**
+
 ```bash
 pip3 install streamlit pandas plotly
 ```
 
 This is the standard and recommended approach for Python packages.
-
