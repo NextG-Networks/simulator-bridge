@@ -170,3 +170,9 @@ time.csv
 *.pgf
 
 out_ts/ns-3-mmwave-oran/out/logs/
+out_ts/ns-3-mmwave-oran/out/pcap/
+out_ts/
+visual/netanim/build
+
+gnb_kpis.csv
+ue_kpis.csv
