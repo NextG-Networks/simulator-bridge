@@ -71,28 +71,39 @@ static GlobalValue g_reducedPmValues ("reducedPmValues", "If true, use a subset 
 // ---------------- Timeseries sampler (drop-in)// Global variables
 struct GlobalState {
   double lastT = 0.0;
-  uint64_t lastBytes = 0;
-  double ewma = 0.0;
-  bool seenPing = false;
-  double lastPingMs = 0.0;
+  std::vector<uint64_t> lastBytes;
+  std::vector<double> ewma;
+  std::vector<bool> seenPing;
+  std::vector<double> lastPingMs;
 } gS;
 
 AnimationInterface *g_anim = nullptr; // Global pointer for NetAnim updates
+static double g_simStopTime = 0.0; // Global simulation stop time for event termination checks
 
-static void PingRttCallback(Time rtt) {
-  gS.lastPingMs = rtt.GetMilliSeconds();
-  gS.seenPing   = true;
+static void PingRttCallback(uint32_t ueIndex, Time rtt) {
+  if (gS.lastPingMs.size() > ueIndex) {
+      gS.lastPingMs[ueIndex] = rtt.GetMilliSeconds();
+      gS.seenPing[ueIndex]   = true;
+  }
 }
 
 static void SampleAll(const NodeContainer &ueNodes,
                       const NetDeviceContainer &ueDevs,
                       Ptr<Node> gnbNode,
                       double covRadius,
-                      Ptr<PacketSink> sink0,
+                      const ApplicationContainer &sinks,
                       double periodSec)
 {
   static std::ofstream f;
   static bool headerDone = false;
+
+  // Initialize global state vectors if needed
+  if (gS.lastBytes.empty()) {
+      gS.lastBytes.resize(ueNodes.GetN(), 0);
+      gS.ewma.resize(ueNodes.GetN(), 0.0);
+      gS.lastPingMs.resize(ueNodes.GetN(), 0.0);
+      gS.seenPing.resize(ueNodes.GetN(), false);
+  }
 
   if (!headerDone) {
     f.open("sim_timeseries_v3.csv", std::ios::out | std::ios::trunc);
@@ -106,10 +117,15 @@ static void SampleAll(const NodeContainer &ueNodes,
         << ",ue" << i << "_dist_to_gnb_m"
         << ",ue" << i << "_inside";
     }
-    f << ",throughput_ue0_mbps"
-      << ",throughput_ue0_ewma"
-      << ",ping_ms"
-      << ",mcs_dl"           // Add MCS column
+    
+    // Throughput and Ping columns for each UE
+    for (uint32_t i = 0; i < ueNodes.GetN(); ++i) {
+        f << ",throughput_ue" << i << "_mbps"
+          << ",throughput_ue" << i << "_ewma"
+          << ",ping_ue" << i << "_ms";
+    }
+
+    f << ",mcs_dl"           // Add MCS column
       << ",mcs_ul"           // Add UL MCS column
       << ",fixed_mcs_dl"     // Add fixed MCS flag
       << "\n";
@@ -135,24 +151,31 @@ static void SampleAll(const NodeContainer &ueNodes,
       << "," << inside;
   }
 
-  double mbps = 0.0;
-  if (sink0) {
-    uint64_t bytes = sink0->GetTotalRx();
-    double dt = now - gS.lastT;
-    if (gS.lastT > 0.0 && dt > 0.0) {
-      mbps = 8.0 * (bytes - gS.lastBytes) / dt / 1e6;
-    }
-    gS.lastBytes = bytes;
-    gS.lastT = now;
-  }
-
+  // Calculate throughput for each UE
+  double dt = now - gS.lastT;
   const double tau = 1.0; // EWMA time constant (s)
   const double alpha = 1.0 - std::exp(-(periodSec / tau));
-  gS.ewma = alpha * mbps + (1.0 - alpha) * gS.ewma;
 
-  double pingMs = gS.seenPing ? gS.lastPingMs : 0.0;
-
-
+  for (uint32_t i = 0; i < ueNodes.GetN(); ++i) {
+      double mbps = 0.0;
+      if (i < sinks.GetN()) {
+          Ptr<PacketSink> sink = DynamicCast<PacketSink>(sinks.Get(i));
+          if (sink) {
+              uint64_t bytes = sink->GetTotalRx();
+              if (gS.lastT > 0.0 && dt > 0.0) {
+                  mbps = 8.0 * (bytes - gS.lastBytes[i]) / dt / 1e6;
+              }
+              gS.lastBytes[i] = bytes;
+          }
+      }
+      gS.ewma[i] = alpha * mbps + (1.0 - alpha) * gS.ewma[i];
+      
+      double pingMs = gS.seenPing[i] ? gS.lastPingMs[i] : 0.0;
+      
+      f << "," << mbps << "," << gS.ewma[i] << "," << pingMs;
+  }
+  
+  gS.lastT = now;
 
   // Get MCS values from scheduler
   uint8_t mcsDl = 255;  // 255 = adaptive/not fixed
@@ -181,24 +204,25 @@ static void SampleAll(const NodeContainer &ueNodes,
     }
   }
 
-  f << "," << mbps
-    << "," << gS.ewma
-    << "," << pingMs
-    << "," << static_cast<int>(mcsDl)    // Add MCS DL value
+  f << "," << static_cast<int>(mcsDl)    // Add MCS DL value
     << "," << static_cast<int>(mcsUl)    // Add MCS UL value
     << "," << (fixedMcsDl ? 1 : 0)       // Add fixed MCS flag
     << "\n";
   f.flush();
 
-  // Update NetAnim description with throughput
+  // Update NetAnim description with throughput (UE0 only for now, or loop)
   if (g_anim) {
-      std::ostringstream oss;
-      oss << "UE0 (" << std::fixed << std::setprecision(1) << mbps << " Mbps)";
-      g_anim->UpdateNodeDescription(ueNodes.Get(0), oss.str());
+      for (uint32_t i = 0; i < ueNodes.GetN(); ++i) {
+          std::ostringstream oss;
+          // Calculate instantaneous throughput for display (approx from EWMA or last calc)
+          // Using EWMA for stability in display
+          oss << "UE" << i << " (" << std::fixed << std::setprecision(1) << gS.ewma[i] << " Mbps)";
+          g_anim->UpdateNodeDescription(ueNodes.Get(i), oss.str());
+      }
   }
 
   Simulator::Schedule(Seconds(periodSec), &SampleAll,
-                      ueNodes, ueDevs, gnbNode, covRadius, sink0, periodSec);
+                      ueNodes, ueDevs, gnbNode, covRadius, sinks, periodSec);
 }
 
 // ---------------- Dynamic MCS Logic ----------------
@@ -249,6 +273,7 @@ static int GetCurrentMcs(Ptr<Node> gnb)
     return flexSched->GetCurrentMcsDl();
   }
   return -1;
+
 }
 
 static void ScheduleNextMcsEvent(Ptr<Node> gnb, bool nextIsLow)
@@ -256,7 +281,7 @@ static void ScheduleNextMcsEvent(Ptr<Node> gnb, bool nextIsLow)
   if (nextIsLow) {
     int targetMcs = 4 + (rand() % 6); 
     ChangeMcs(gnb, targetMcs);
-    double duration = 60.0;
+    double duration = 10.0;
     std::cerr << "\n"
               << "╔════════════════════════════════════════════════════════════╗\n"
               << "║  [EVENT] MCS DEGRADATION TRIGGERED                        ║\n"
@@ -281,15 +306,19 @@ static void ScheduleNextMcsEvent(Ptr<Node> gnb, bool nextIsLow)
                   << "║  Action: Extending event window by 5s                    ║\n"
                   << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
         NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] AI intervention detected (MCS=" << currentMcs << " != " << targetMcs << "). Extending window by 5s.");
-        Simulator::Schedule(Seconds(5.0), [gnb]() { ScheduleNextMcsEvent(gnb, false); });
+        if (Simulator::Now().GetSeconds() + 5.0 < g_simStopTime) {
+          Simulator::Schedule(Seconds(5.0), [gnb]() { ScheduleNextMcsEvent(gnb, false); });
+        }
       } else {
-        ScheduleNextMcsEvent(gnb, false);
+        if (Simulator::Now().GetSeconds() < g_simStopTime) {
+          ScheduleNextMcsEvent(gnb, false);
+        }
       }
     });
   } else {
     int targetMcs = 1 + (rand() % 28);
     ChangeMcs(gnb, targetMcs);
-    double duration = 60.0; 
+    double duration = 10.0; 
     std::cerr << "\n"
               << "╔════════════════════════════════════════════════════════════╗\n"
               << "║  [EVENT] MCS RANDOMIZATION TRIGGERED                      ║\n"
@@ -314,15 +343,31 @@ static void ScheduleNextMcsEvent(Ptr<Node> gnb, bool nextIsLow)
                   << "║  Action: Extending event window by 5s                    ║\n"
                   << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
         NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] AI intervention detected (MCS=" << currentMcs << " != " << targetMcs << "). Extending window by 5s.");
-        Simulator::Schedule(Seconds(5.0), [gnb]() { ScheduleNextMcsEvent(gnb, true); });
+        if (Simulator::Now().GetSeconds() + 5.0 < g_simStopTime) {
+          Simulator::Schedule(Seconds(5.0), [gnb]() { ScheduleNextMcsEvent(gnb, true); });
+        }
       } else {
-        ScheduleNextMcsEvent(gnb, true);
+        if (Simulator::Now().GetSeconds() < g_simStopTime) {
+          ScheduleNextMcsEvent(gnb, true);
+        }
       }
     });
   }
 }
 
 // ---------------- NEW RANDOM EVENTS ----------------
+
+static void ChangeTrafficProfile(Ptr<OnOffApplication> app, bool highLoad) {
+  // Toggle between High (100Mbps) and Low (10Mbps) load
+  std::string rate = highLoad ? "100Mbps" : "10Mbps";
+  app->SetAttribute("DataRate", StringValue(rate));
+  NS_LOG_UNCOND("Traffic Profile Changed: " << (highLoad ? "HIGH" : "LOW") << " (" << rate << ")");
+  
+  // Schedule next change (random time between 5s and 15s)
+  Ptr<UniformRandomVariable> var = CreateObject<UniformRandomVariable>();
+  double nextTime = var->GetValue(5.0, 15.0);
+  Simulator::Schedule(Seconds(nextTime), &ChangeTrafficProfile, app, !highLoad);
+}
 
 static void RandomBlockageEvent(NodeContainer ues, Ptr<Node> gnb)
 {
@@ -374,7 +419,9 @@ static void RandomBlockageEvent(NodeContainer ues, Ptr<Node> gnb)
     
     // Schedule next blockage event (random time between 15-30s)
     double nextTime = 15.0 + (rand() % 15);
-    Simulator::Schedule(Seconds(nextTime), &RandomBlockageEvent, ues, gnb);
+    if (Simulator::Now().GetSeconds() + nextTime < g_simStopTime) {
+        Simulator::Schedule(Seconds(nextTime), &RandomBlockageEvent, ues, gnb);
+    }
 }
 
 static void TrafficSpikeEvent(NodeContainer remoteHosts)
@@ -427,7 +474,9 @@ static void TrafficSpikeEvent(NodeContainer remoteHosts)
     
     // Schedule next spike event (random time between 20-40s)
     double nextTime = 20.0 + (rand() % 20);
-    Simulator::Schedule(Seconds(nextTime), &TrafficSpikeEvent, remoteHosts);
+    if (Simulator::Now().GetSeconds() + nextTime < g_simStopTime) {
+        Simulator::Schedule(Seconds(nextTime), &TrafficSpikeEvent, remoteHosts);
+    }
 }
 
 
@@ -447,6 +496,7 @@ int main (int argc, char** argv)
 
   DoubleValue simV; GlobalValue::GetValueByName("simTime", simV);
   double simTime = simV.Get();
+  g_simStopTime = simTime; // Initialize global for event termination checks
   StringValue outV; GlobalValue::GetValueByName("outDir", outV);
   fs::path outDir = outV.Get();
 
@@ -552,16 +602,76 @@ int main (int argc, char** argv)
   // UE Mobility (Same as ourv2.cc)
   MobilityHelper uem;
   uem.SetMobilityModel("ns3::WaypointMobilityModel");
-  uem.Install(ue);
+  uem.Install(ue.Get(0)); // ONLY install on UE0
   Ptr<WaypointMobilityModel> ueMobility = ue.Get(0)->GetObject<WaypointMobilityModel>();
   
   // ... (Waypoint logic same as ourv2.cc, simplified here for brevity but functional) ...
-  ueMobility->AddWaypoint(Waypoint(Seconds(0.0), Vector(30, 25, 1.5)));
-  ueMobility->AddWaypoint(Waypoint(Seconds(10.0), Vector(70, 25, 1.5)));
-  ueMobility->AddWaypoint(Waypoint(Seconds(20.0), Vector(95, 25, 1.5)));
-  ueMobility->AddWaypoint(Waypoint(Seconds(30.0), Vector(95, 110, 1.5)));
-  ueMobility->AddWaypoint(Waypoint(Seconds(40.0), Vector(50, 110, 1.5)));
-  ueMobility->AddWaypoint(Waypoint(Seconds(50.0), Vector(30, 25, 1.5)));
+  // Loop waypoints until simTime
+  double t_cycle = 0.0;
+  double cycle_duration = 50.0;
+
+  Vector p_start(0, 0, 1.5);    // Close to gNB (LOS)
+  // Vector p_wall_front(70, 25, 1.5); // Just before building
+  // Vector p_wall_back(95, 25, 1.5);  // Behind building (NLOS/Penetration)
+  // Vector p_far_corner(95, 110, 1.5); // Far corner (Shadowed)
+  // Vector p_clear(50, 110, 1.5);      // Clear of building (LOS)
+
+  // // 0s: Start (Initial position)
+  // ueMobility->AddWaypoint(Waypoint(Seconds(0.0), p_start));
+
+  // while (t_cycle < simTime) {
+  //     // Note: The start point for the current cycle is already added 
+  //     // (either by initialization or by the end of the previous cycle).
+      
+  //     // 10s: Approach wall
+  //     if (t_cycle + 10.0 > simTime) break;
+  //     ueMobility->AddWaypoint(Waypoint(Seconds(t_cycle + 10.0), p_wall_front));
+
+  //     // 20s: Go through/behind wall -> Drop in throughput
+  //     if (t_cycle + 20.0 > simTime) break;
+  //     ueMobility->AddWaypoint(Waypoint(Seconds(t_cycle + 20.0), p_wall_back));
+
+  //     // 30s: Move along back -> Low throughput
+  //     if (t_cycle + 30.0 > simTime) break;
+  //     ueMobility->AddWaypoint(Waypoint(Seconds(t_cycle + 30.0), p_far_corner));
+
+  //     // 40s: Move clear -> Recovery
+  //     if (t_cycle + 40.0 > simTime) break;
+  //     ueMobility->AddWaypoint(Waypoint(Seconds(t_cycle + 40.0), p_clear));
+
+  //     // 50s: Return to start (closes the loop and sets start for next cycle)
+  //     if (t_cycle + 50.0 <= simTime) {
+  //          ueMobility->AddWaypoint(Waypoint(Seconds(t_cycle + 50.0), p_start));
+  //     }
+      
+  //     t_cycle += cycle_duration;
+  // }
+
+  // UE1 Mobility (High Speed Vehicle - Circular Pattern)
+  // Keep UE1 moving in a circle around the gNB to stay in coverage
+  MobilityHelper uem2;
+  uem2.SetMobilityModel("ns3::WaypointMobilityModel");
+  uem2.Install(ue.Get(1));
+  Ptr<WaypointMobilityModel> ue1Mobility = ue.Get(1)->GetObject<WaypointMobilityModel>();
+  
+  // Circular path around gNB (radius ~30m, centered at gNB position 25,25)
+  // 8 waypoints forming a circle, each segment takes ~15 seconds
+  double radius = 30.0;
+  double centerX = 25.0;
+  double centerY = 25.0;
+  int numPoints = 8;
+  double segmentTime = 15.0; // seconds per segment
+  
+  double t = 0.0;
+  while (t < simTime) {
+    for (int i = 0; i < numPoints && t < simTime; i++) {
+      double angle = (2.0 * M_PI * i) / numPoints;
+      double x = centerX + radius * cos(angle);
+      double y = centerY + radius * sin(angle);
+      ue1Mobility->AddWaypoint(Waypoint(Seconds(t), Vector(x, y, 1.5)));
+      t += segmentTime;
+    }
+  }
 
   // Core + RH
   {
@@ -602,37 +712,115 @@ int main (int argc, char** argv)
      ->AddNetworkRouteTo(Ipv4Address("7.0.0.0"), Ipv4Mask("255.0.0.0"), 1);
 
   const uint16_t cbrPort = 4000;
+  // UE1 Sink
   PacketSinkHelper sink("ns3::UdpSocketFactory", InetSocketAddress(Ipv4Address::GetAny(), cbrPort));
   ApplicationContainer sinkApps = sink.Install(ue.Get(0));
   sinkApps.Start(Seconds(0.2));
   Ptr<PacketSink> sinkApp = DynamicCast<PacketSink>(sinkApps.Get(0));
 
+  // UE2 Sink (Background)
+  PacketSinkHelper sink2("ns3::UdpSocketFactory", InetSocketAddress(Ipv4Address::GetAny(), cbrPort+1));
+  ApplicationContainer sinkApps2 = sink2.Install(ue.Get(1));
+  sinkApps2.Start(Seconds(0.2));
+
+  // Combine sinks for logging
+  ApplicationContainer allSinks;
+  allSinks.Add(sinkApps);
+  allSinks.Add(sinkApps2);
+
+  // UE1 Traffic Source (Bursty)
   OnOffHelper cbr("ns3::UdpSocketFactory", InetSocketAddress(ueIf.GetAddress(0), cbrPort));
-  cbr.SetAttribute("OnTime",  StringValue("ns3::ConstantRandomVariable[Constant=1]"));
-  cbr.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0]"));
+  // Replace Constant with Exponential for burstiness
+  cbr.SetAttribute("OnTime",  StringValue("ns3::ExponentialRandomVariable[Mean=1.0]"));
+  cbr.SetAttribute("OffTime", StringValue("ns3::ExponentialRandomVariable[Mean=0.5]"));
   cbr.SetAttribute("DataRate", StringValue("50Mbps"));
   cbr.SetAttribute("PacketSize", UintegerValue(1200));
-  cbr.Install(rh.Get(0)).Start(Seconds(0.35));
+  ApplicationContainer cbrApps = cbr.Install(rh.Get(0));
+  cbrApps.Start(Seconds(0.35));
+
+  // Schedule dynamic traffic changes for UE1
+  Simulator::Schedule(Seconds(10.0), &ChangeTrafficProfile, 
+                      DynamicCast<OnOffApplication>(cbrApps.Get(0)), true);
+
+  // UE2 Traffic Source (Constant Interference)
+  OnOffHelper cbr2("ns3::UdpSocketFactory", InetSocketAddress(ueIf.GetAddress(1), cbrPort+1));
+  cbr2.SetAttribute("OnTime",  StringValue("ns3::ConstantRandomVariable[Constant=1]"));
+  cbr2.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0]"));
+  cbr2.SetAttribute("DataRate", StringValue("20Mbps")); // Moderate background load
+  cbr2.SetAttribute("PacketSize", UintegerValue(1200));
+  cbr2.Install(rh.Get(0)).Start(Seconds(1.0));
 
   mmw->EnableTraces();
 
   const double covRadius = 100.0;
   Simulator::Schedule(Seconds(0.1), &SampleAll,
                       std::ref(ue), std::ref(ueDevs), gnb.Get(0),
-                      covRadius, sinkApp, 0.1);
+                      covRadius, allSinks, 0.1);
 
   // NetAnim
   AnimationInterface anim("NetAnimFile_v3.xml");
   g_anim = &anim;
   anim.SetMobilityPollInterval(Seconds(1));
+
+  // Install V4Ping for each UE to measure latency
+  for (uint32_t i = 0; i < ue.GetN(); ++i) {
+      V4PingHelper ping = V4PingHelper(ueIf.GetAddress(i));
+      ApplicationContainer pingApps = ping.Install(rh.Get(0)); // Ping from RH to UE
+      pingApps.Start(Seconds(1.0));
+      pingApps.Stop(Seconds(simTime));
+      
+      // Connect trace with context (UE index)
+      pingApps.Get(0)->TraceConnectWithoutContext("Rtt", MakeBoundCallback(&PingRttCallback, i));
+  }
   anim.SkipPacketTracing();
+
+  // Configure Icons
+  // Note: Ensure these files exist in the scratch directory or update the paths
+  uint32_t gnbIcon = anim.AddResource("/home/hybrid/proj/icons_netanim/gnb.png");
+  uint32_t ueIcon = anim.AddResource("/home/hybrid/proj/icons_netanim/ue.png");
+
+  
+  anim.UpdateNodeImage(2, gnbIcon); // gNB (Node 2)
+  anim.UpdateNodeImage(5, ueIcon);  // UE 0 (Node 3)
+  anim.UpdateNodeImage(4, ueIcon);  // UE 1 (Node 4)
+  
+
+
+  anim.UpdateNodeSize(2, 15.0, 15.0);
+  anim.UpdateNodeSize(5, 10.0, 10.0);
+  anim.UpdateNodeSize(4, 10.0, 10.0); // UE 1
+
+  // Hide Nodes 1, 3, 6 (SGW, UE0, Building)
+  // Note: Node IDs shifted due to adding UE2
+  // 0: PGW
+  // 1: SGW
+  // 2: gNB
+  // 3: UE0
+  // 4: UE1 (New)
+  // 5: RH
+  // 6: Building (was 5)
+  
+  anim.UpdateNodeSize(0, 0.0, 0.0); // Hide SGW
+  anim.UpdateNodeSize(1, 0.0, 0.0); // Hide SGW
+  anim.UpdateNodeSize(3, 0.0, 0.0); // Hide UE0
+  // anim.UpdateNodeSize(4, 0.0, 0.0); // Hide SGW
+
+  // Remove Text for Nodes 2, 5
+  anim.UpdateNodeDescription(2, ""); // gNB
+  anim.UpdateNodeDescription(5, ""); // RH
+
+  // Remove Link Text (Best effort to hide links)
+  // Links might have shifted IDs too, clearing generally for known connections
+  anim.UpdateLinkDescription(1, 5, ""); // PGW-RH (Node 1 -> Node 5)
+  anim.UpdateLinkDescription(0, 1, ""); // SGW-PGW (if exists)
+  anim.UpdateLinkDescription(0, 2, ""); // SGW-gNB (if exists)
 
   // Schedule MCS Events (Existing)
   Simulator::Schedule(Seconds(5.0), &ScheduleNextMcsEvent, gnb.Get(0), true);
 
   // Schedule NEW Random Events
-  //Simulator::Schedule(Seconds(12.0), &RandomBlockageEvent, ue, gnb.Get(0));
-  //Simulator::Schedule(Seconds(18.0), &TrafficSpikeEvent, rh);
+  Simulator::Schedule(Seconds(12.0), &RandomBlockageEvent, ue, gnb.Get(0));
+  Simulator::Schedule(Seconds(18.0), &TrafficSpikeEvent, rh);
 
   Simulator::Stop(Seconds(simTime));
   Simulator::Run();

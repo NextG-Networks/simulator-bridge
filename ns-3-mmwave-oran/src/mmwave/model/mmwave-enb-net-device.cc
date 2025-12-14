@@ -34,6 +34,7 @@
 #include "encode_e2apv1.hpp"
 #include "mmwave-net-device.h"
 #include "mmwave-ue-net-device.h"
+#include "mmwave-flex-tti-mac-scheduler.h"
 
 #include <ns3/abort.h>
 #include <ns3/callback.h>
@@ -1644,14 +1645,18 @@ MmWaveEnbNetDevice::BuildAndSendReportMessage(E2Termination::RicSubscriptionRequ
         }
     }
 
+    // Schedule next report with a 20ms delay after the period boundary
+    // This ensures PDCP packets have time to be processed before stats are queried
+    // Without this delay, packets arriving slightly after the period boundary
+    // (e.g., at t=1.00301s when base schedule is t=1.0008s) would be missed
     if (!m_forceE2FileLogging)
         Simulator::ScheduleWithContext(1,
-                                       Seconds(m_e2Periodicity),
+                                       Seconds(m_e2Periodicity + 0.02),
                                        &MmWaveEnbNetDevice::BuildAndSendReportMessage,
                                        this,
                                        params);
     else
-        Simulator::Schedule(Seconds(m_e2Periodicity),
+        Simulator::Schedule(Seconds(m_e2Periodicity + 0.02),
                             &MmWaveEnbNetDevice::BuildAndSendReportMessage,
                             this,
                             params);
@@ -1668,14 +1673,88 @@ MmWaveEnbNetDevice::ControlMessageReceivedCallback(E2AP_PDU_t* sub_req_pdu)
 {
     NS_LOG_DEBUG("MmWaveEnbNetDevice::ControlMessageReceivedCallback: Received RIC Control Message");
     
-    // The RicControlMessage constructor will decode and apply simple commands
-    // like "move-enb", "set-mcs", "set-bandwidth" via ApplySimpleCommand
+    // Create RicControlMessage - commands are executed in ApplySimpleCommand during construction
     Ptr<RicControlMessage> controlMessage = Create<RicControlMessage>(sub_req_pdu);
     
-    // For more complex control types, you can add a switch statement here
-    // similar to LteEnbNetDevice, but for now the simple commands are handled
-    // automatically by ApplySimpleCommand
+    fprintf(stderr, "[ControlMessageReceivedCallback] Cell %u: Received %zu commands\n", 
+            m_cellId, controlMessage->m_commands.size());
+    fflush(stderr);
+    
+    for (const auto& cmd : controlMessage->m_commands)
+    {
+        fprintf(stderr, "[ControlMessageReceivedCallback] Processing cmd.type='%s' targetId=%u value=%.2f (my cellId=%u)\n",
+                cmd.type.c_str(), cmd.targetId, cmd.value, m_cellId);
+        fflush(stderr);
+        
+        // Check if command targets this node (by node ID or cell ID)
+        uint32_t myNodeId = GetNode()->GetId();
+        if (cmd.targetId != 0 && cmd.targetId != m_cellId && cmd.targetId != myNodeId) {
+             fprintf(stderr, "[ControlMessageReceivedCallback] Skipping: targetId=%u doesn't match cellId=%u or nodeId=%u\n",
+                     cmd.targetId, m_cellId, myNodeId);
+             fflush(stderr);
+             continue;
+        }
+        
+        if (cmd.type == "set-enb-txpower")
+        {
+            double txPowerDbm = cmd.value;
+            Ptr<MmWaveEnbPhy> phy = GetPhy();
+            if (phy) {
+                phy->SetTxPower(txPowerDbm);
+                NS_LOG_INFO("Set Tx Power to " << txPowerDbm << " dBm for cell " << m_cellId);
+                fprintf(stderr, "  → TX Power change applied: %.1f dBm for cell %u\n", txPowerDbm, m_cellId);
+                fflush(stderr);
+            }
+        }
+        else if (cmd.type == "set-mcs")
+        {
+            int mcs = (int)cmd.value;
+            
+            // Access scheduler through component carrier (CC 0)
+            // This matches the logic in our-v3.cc which is known to work
+            std::map<uint8_t, Ptr<MmWaveComponentCarrier>> ccMap = GetCcMap();
+            if (!ccMap.empty()) {
+                Ptr<MmWaveComponentCarrierEnb> cc = DynamicCast<MmWaveComponentCarrierEnb>(ccMap.at(0));
+                if (cc) {
+                    Ptr<MmWaveMacScheduler> baseSched = cc->GetMacScheduler();
+                    if (baseSched) {
+                        Ptr<MmWaveFlexTtiMacScheduler> scheduler = DynamicCast<MmWaveFlexTtiMacScheduler>(baseSched);
+                        if (scheduler) {
+                            scheduler->SetMcs(mcs);
+                            NS_LOG_INFO("Set MCS to " << mcs << " for cell " << m_cellId);
+                            fprintf(stderr, "  → MCS change applied: Fixed MCS=%d for cell %u\n", mcs, m_cellId);
+                            fflush(stderr);
+                        } else {
+                            fprintf(stderr, "  [Error] Failed to cast scheduler to MmWaveFlexTtiMacScheduler! Actual type: %s\n", 
+                                    baseSched->GetInstanceTypeId().GetName().c_str());
+                            fflush(stderr);
+                        }
+                    } else {
+                         fprintf(stderr, "  [Error] cc->GetMacScheduler() returned null!\n");
+                         fflush(stderr);
+                    }
+                } else {
+                    fprintf(stderr, "  [Error] Failed to cast CC 0 to MmWaveComponentCarrierEnb!\n");
+                    fflush(stderr);
+                }
+            } else {
+                fprintf(stderr, "  [Error] GetCcMap() returned empty map!\n");
+                fflush(stderr);
+            }
+        }
+        else if (cmd.type == "set-bandwidth")
+        {
+            uint8_t bandwidth = (uint8_t)cmd.value;
+            SetBandwidth(bandwidth);
+            uint8_t confirmedBw = GetBandwidth();
+            NS_LOG_INFO("Set Bandwidth to " << (int)bandwidth << " for cell " << m_cellId);
+            fprintf(stderr, "  → Bandwidth change applied: %u RBs (confirmed %u) for cell %u\n", 
+                    bandwidth, confirmedBw, m_cellId);
+            fflush(stderr);
+        }
+    }
 }
+
 
 
 uint64_t

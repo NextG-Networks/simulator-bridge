@@ -977,11 +977,11 @@ MmWaveBearerStatsConnector::ConnectDrbTracesUe(std::string context,
             arg->imsi = imsi;
             arg->cellId = cellId;
             arg->stats = e2PdcpStats;
-
+            
             m_pdcpDrbDlRxCb[imsi] = MakeBoundCallback(&DlRxPduCallback, arg);
             m_pdcpDrbUlTxCb[imsi] = MakeBoundCallback(&UlTxPduCallback, arg);
 
-            Config::ConnectFailSafe(basePath + "/DataRadioBearerMap/*/LtePdcp/RxPDU",
+            bool connected = Config::ConnectFailSafe(basePath + "/DataRadioBearerMap/*/LtePdcp/RxPDU",
                                     m_pdcpDrbDlRxCb.at(imsi));
             Config::ConnectFailSafe(basePath + "/DataRadioBearerMap/*/LtePdcp/TxPDU",
                                     m_pdcpDrbUlTxCb.at(imsi));

@@ -1,37 +1,12 @@
-check_include_file_cxx(stdint.h HAVE_STDINT_H)
-if(HAVE_STDINT_H)
-    add_definitions(-DHAVE_STDINT_H)
-endif()
-
-set(examples_as_tests_sources)
-if(${ENABLE_EXAMPLES})
-    set(examples_as_tests_sources
-        #test/oran-interface-examples-test-suite.cc
-        )
-endif()
-
-#include_directories(/usr/local/include/e2sim)
-#link_directories(/usr/local/lib)
-#link_libraries(e2sim)
-
-find_external_library(DEPENDENCY_NAME e2sim
-                      HEADER_NAME e2sim.hpp
-                      LIBRARY_NAME e2sim
-                      SEARCH_PATHS /usr/local/include/e2sim)
-
-if(!${e2sim_FOUND})
-    message(WARNING "e2sim is required by oran-interface and was not found" )
-    return ()
-endif()
-
 include_directories(${e2sim_INCLUDE_DIRS})
-message(STATUS "dirs found:  ${e2sim_INCLUDE_DIRS}" )
-message(STATUS "libraries found:  ${e2sim_LIBRARIES}" )
+include_directories(/home/hybrid/proj/oran-e2sim/e2sim/src/ASN1c)
+include_directories(/home/hybrid/proj/oran-e2sim/e2sim/e2sm_examples/kpm_e2sm/src/ASN1c)
+include_directories(/home/hybrid/proj/oran-e2sim/e2sim/src/base)
+include_directories(/home/hybrid/proj/oran-e2sim/e2sim/src/encoding)
 
 build_lib(
     LIBNAME oran-interface
     SOURCE_FILES model/oran-interface.cc
-                 helper/oran-interface-helper.cc
                  model/asn1c-types.cc
                  model/function-description.cc
                  model/kpm-indication.cc
@@ -53,10 +28,10 @@ build_lib(
                  helper/indication-message-helper.h
                  helper/lte-indication-message-helper.h
                  helper/mmwave-indication-message-helper.h
-    LIBRARIES_TO_LINK 
+    LIBRARIES_TO_LINK
+                     
                     ${libcore}
                     ${libmobility}
                     ${libnetwork}
-                    ${e2sim_LIBRARIES}
+                    /home/hybrid/proj/oran-e2sim/e2sim/build/libe2sim.a
 )
-

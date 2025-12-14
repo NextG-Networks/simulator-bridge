@@ -176,7 +176,7 @@ int e2ap_asn1c_encode_pdu(E2AP_PDU_t* pdu, unsigned char **buffer)
     exit(1);
   }
   else {
-    LOG_D("[E2AP ASN] Encoded succesfully, encoded size = %d", len);
+    // LOG_D("[E2AP ASN] Encoded succesfully, encoded size = %d", len);
   }
 
   ASN_STRUCT_FREE_CONTENTS_ONLY(asn_DEF_E2AP_PDU, pdu);
@@ -197,7 +197,7 @@ void e2ap_asn1c_decode_pdu(E2AP_PDU_t* pdu, unsigned char *buffer, int len)
     exit(1);
   }
   else {
-    LOG_D("[E2AP ASN] Decoded succesfully");
+    // LOG_D("[E2AP ASN] Decoded succesfully");
   }
 }
 

@@ -353,6 +353,12 @@ set(header_files
     model/component-carrier-enb.h
 )
 
+include_directories(${e2sim_INCLUDE_DIRS})
+include_directories(/home/hybrid/proj/oran-e2sim/e2sim/src/ASN1c)
+include_directories(/home/hybrid/proj/oran-e2sim/e2sim/e2sm_examples/kpm_e2sm/src/ASN1c)
+include_directories(/home/hybrid/proj/oran-e2sim/e2sim/src/base)
+include_directories(/home/hybrid/proj/oran-e2sim/e2sim/src/encoding)
+
 build_lib(
   LIBNAME lte
   SOURCE_FILES ${source_files}

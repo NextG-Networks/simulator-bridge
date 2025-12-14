@@ -49,13 +49,20 @@ namespace ns3 {
     enum ControlMessageRequestIdType { TS = 1001, QoS = 1002
     };
 
-    static void ApplySimpleCommand(const std::string& json);
+    struct ControlCommand {
+        std::string type;
+        uint16_t targetId;
+        double value;
+    };
+
+    void ParseSimpleCommand(const std::string& json);
     RicControlMessage(E2AP_PDU_t* pdu);
     ~RicControlMessage ();
 
     ControlMessageRequestIdType m_requestType;
-    
-    static std::vector<RANParameterItem> ExtractRANParametersFromControlMessage (
+    std::vector<ControlCommand> m_commands;
+
+        static std::vector<RANParameterItem> ExtractRANParametersFromControlMessage (
       E2SM_RC_ControlMessage_Format1_t *e2SmRcControlMessageFormat1);
     
     std::vector<RANParameterItem> m_valuesExtracted;

@@ -64,11 +64,26 @@ class MmWaveFlexTtiMacScheduler : public MmWaveMacScheduler
     virtual void DoDispose(void) override;
     static TypeId GetTypeId(void);
 
-    // Getter methods for MCS values
-    uint8_t GetCurrentMcsDl() const;
-    uint8_t GetCurrentMcsUl() const;
-    bool IsFixedMcsDl() const;
-    bool IsFixedMcsUl() const;
+    // Direct setters to bypass attribute system (for thread safety)
+    void SetMcs(int mcs)
+    {
+        // NS_LOG_FUNCTION(this << mcs); // Cannot use NS_LOG_FUNCTION in header easily without defining component
+        if (mcs >= 0 && mcs <= 28) {
+            m_fixedMcsDl = true;
+            m_mcsDefaultDl = mcs;
+            m_fixedMcsUl = true;
+            m_mcsDefaultUl = mcs;
+        } else {
+            m_fixedMcsDl = false;
+            m_fixedMcsUl = false;
+        }
+    }
+
+    bool IsFixedMcsDl() const { return m_fixedMcsDl; }
+
+    uint8_t GetCurrentMcsDl() const { return m_mcsDefaultDl; }
+
+    uint8_t GetCurrentMcsUl() const { return m_mcsDefaultUl; }
 
     virtual void SetMacSchedSapUser(MmWaveMacSchedSapUser* sap) override;
     virtual void SetMacCschedSapUser(MmWaveMacCschedSapUser* s) override;

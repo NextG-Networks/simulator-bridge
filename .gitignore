@@ -169,4 +169,4 @@ time.csv
 *.pdf
 *.pgf
 
-out_ts/
+out_ts/ns-3-mmwave-oran/out/logs/

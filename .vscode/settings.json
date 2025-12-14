@@ -3,5 +3,10 @@
         "fstream": "cpp",
         "cmath": "cpp",
         "ostream": "cpp"
-    }
+    },
+    "csv-preview.separator": ",",
+    "csv-preview.quoteMark": "\"",
+    "csv-preview.hasHeaders": true,
+    "csv-preview.capitalizeHeaders": false,
+    "workbench.webview.experimental.useIframes": true
 }

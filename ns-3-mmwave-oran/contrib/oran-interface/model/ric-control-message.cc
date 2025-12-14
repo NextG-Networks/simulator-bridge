@@ -23,6 +23,11 @@
  */
  
 #include "ric-control-message.h"
+#include <ns3/log.h>
+#include <ns3/simulator.h>
+#include <iostream>
+#include <sstream>
+#include <vector>
 #include <ns3/asn1c-types.h>
 #include <ns3/log.h>
 #include <bitset>
@@ -32,17 +37,17 @@
 #include "ns3/node.h"
 #include "ns3/mobility-model.h"
 #include "ns3/simulator.h"
-#include "ns3/vector.h"
-
-// #include "control-gateway.h" // Might not be needed for V2 standalone
-#include <ns3/mmwave-enb-net-device.h>
-#include <ns3/mmwave-enb-mac.h>
-#include <ns3/mmwave-component-carrier-enb.h>
-#include <ns3/onoff-application.h>
-#include <ns3/data-rate.h>
-#include <ns3/mmwave-flex-tti-mac-scheduler.h>
-#include <ns3/lte-enb-rrc.h>
-
+#include "ric-control-message.h"
+#include <ns3/log.h>
+#include <ns3/simulator.h>
+#include <iostream>
+#include <sstream>
+#include <vector>
+#include <ns3/log.h>
+#include <ns3/simulator.h>
+#include <iostream>
+#include <sstream>
+#include <vector>
 namespace ns3 {
 
 NS_LOG_COMPONENT_DEFINE ("RicControlMessage");
@@ -87,684 +92,64 @@ static bool FindString(const std::string& s, const char* key, std::string& out)
 
 // Command executor: supports {"cmd":"move-enb","node":<id>,"x":<X>,"y":<Y>}
 void
-RicControlMessage::ApplySimpleCommand(const std::string& json)
+RicControlMessage::ParseSimpleCommand(const std::string& json)
 {
-    // --- tiny field extractors (no JSON lib needed) ---
-    auto FindNumber = [](const std::string& s, const char* key, double& outVal) -> bool {
-        size_t k = s.find(key);
-        if (k == std::string::npos) return false;
-        k = s.find(':', k);
-        if (k == std::string::npos) return false;
-        while (k+1 < s.size() && s[k+1] == ' ') ++k;
-        char* endp = nullptr;
-        outVal = strtod(s.c_str() + k + 1, &endp);
-        return endp != (s.c_str() + k + 1);
-    };
-    auto FindUint = [&](const std::string& s, const char* key, uint32_t& outVal) -> bool {
-        double v;
-        if (!FindNumber(s, key, v) || v < 0) return false;
-        outVal = static_cast<uint32_t>(v + 0.5);
-        return true;
-    };
-    auto FindString = [](const std::string& s, const char* key, std::string& out) -> bool {
-        size_t k = s.find(key);
-        if (k == std::string::npos) return false;
-        k = s.find(':', k);
-        if (k == std::string::npos) return false;
-        k = s.find('"', k);
-        if (k == std::string::npos) return false;
-        size_t e = s.find('"', k+1);
-        if (e == std::string::npos) return false;
-        out.assign(s.begin() + k + 1, s.begin() + e);
-        return true;
-    };
-
-    fprintf(stderr, "[RicControlMessage] ApplySimpleCommand: Input JSON = '%s' (len=%zu)\n", json.c_str(), json.size());
-    fflush(stderr);
+    NS_LOG_FUNCTION(this << json);
     
-    std::string cmd;
-    if (!FindString(json, "\"cmd\"", cmd)) {
-        fprintf(stderr, "[RicControlMessage] ERROR: No 'cmd' found in control JSON: '%s'\n", json.c_str());
-        fflush(stderr);
-        return;
+    std::string command;
+    uint16_t nodeId = 0;
+    double value = 0.0;
+    
+    // Extract command
+    size_t cmdPos = json.find("\"cmd\"");
+    if (cmdPos != std::string::npos) {
+        size_t valStart = json.find(":", cmdPos) + 1;
+        size_t valEnd = json.find(",", valStart);
+        if (valEnd == std::string::npos) valEnd = json.find("}", valStart);
+        
+        std::string cmdStr = json.substr(valStart, valEnd - valStart);
+        cmdStr.erase(0, cmdStr.find_first_not_of(" \"\t\r\n"));
+        cmdStr.erase(cmdStr.find_last_not_of(" \"\t\r\n") + 1);
+        command = cmdStr;
     }
     
-    fprintf(stderr, "[RicControlMessage] Extracted cmd = '%s'\n", cmd.c_str());
-    fflush(stderr);
-
-    
-
-    if (cmd == "stop") {
-        ns3::Simulator::ScheduleNow([]() {
-            try {
-                fprintf(stderr, "[RicControlMessage] stop: Stopping simulator now\n");
-                fflush(stderr);
-                ns3::Simulator::Stop();
-            } catch (const std::exception& e) {
-                fprintf(stderr, "[RicControlMessage] stop: exception: %s\n", e.what());
-                fflush(stderr);
-            } catch (...) {
-                fprintf(stderr, "[RicControlMessage] stop: unknown exception\n");
-                fflush(stderr);
-            }
-        });
-        return;
-    }
-
-    // ----------------------------------------------------------------------------------
-    // NEW ACTION: handover-trigger
-    // ----------------------------------------------------------------------------------
-    if (cmd == "handover-trigger") {
-        uint32_t nodeId = 0;
-        uint32_t ueId = 0;
-        uint32_t targetCellId = 0;
-
-        if (!FindUint(json, "\"node\"", nodeId) || 
-            !FindUint(json, "\"ueId\"", ueId) ||
-            !FindUint(json, "\"targetCellId\"", targetCellId)) {
-            fprintf(stderr, "[RicControlMessage] handover-trigger requires node (gNB), ueId (RNTI/IMSI), and targetCellId\n");
-            return;
-        }
-
-        ns3::Simulator::ScheduleNow([nodeId, ueId, targetCellId]() {
-            using namespace ns3;
-            
-            try {
-                // Keep strong references to all objects
-                if (nodeId >= NodeList::GetNNodes()) {
-                    fprintf(stderr, "[RicControlMessage] handover-trigger: node %u does not exist\n", nodeId);
-                    fflush(stderr);
-                    return;
-                }
-                
-                Ptr<Node> n = NodeList::GetNode(nodeId);
-                if (!n) {
-                    fprintf(stderr, "[RicControlMessage] handover-trigger: node %u not found\n", nodeId);
-                    fflush(stderr);
-                    return;
-                }
-                
-                // Find MmWaveEnbNetDevice - keep strong reference
-                Ptr<mmwave::MmWaveEnbNetDevice> enbDev = nullptr;
-                for (uint32_t i = 0; i < n->GetNDevices(); ++i) {
-                    Ptr<NetDevice> dev = n->GetDevice(i);
-                    if (!dev) continue;
-                    enbDev = dev->GetObject<mmwave::MmWaveEnbNetDevice>();
-                    if (enbDev) break;
-                }
-                
-                if (!enbDev) {
-                    fprintf(stderr, "[RicControlMessage] handover-trigger: node %u has no MmWaveEnbNetDevice\n", nodeId);
-                    fflush(stderr);
-                    return;
-                }
-
-                // Get RRC - keep strong reference
-                Ptr<LteEnbRrc> rrc = enbDev->GetRrc();
-                if (rrc) {
-                     // TODO: Implement public SendHandoverRequest in LteEnbRrc or expose it
-                     // For now, we just log the action
-                     fprintf(stderr, "[RicControlMessage] handover-trigger: Triggering HO for UE %u from gNB %u to Cell %u (Mock Action)\n", ueId, nodeId, targetCellId);
-                     // rrc->SendHandoverRequest(ueId, targetCellId);
-                } else {
-                     fprintf(stderr, "[RicControlMessage] handover-trigger: node %u has no RRC\n", nodeId);
-                }
-                fflush(stderr);
-            } catch (const std::exception& e) {
-                fprintf(stderr, "[RicControlMessage] handover-trigger: exception: %s\n", e.what());
-                fflush(stderr);
-            } catch (...) {
-                fprintf(stderr, "[RicControlMessage] handover-trigger: unknown exception\n");
-                fflush(stderr);
-            }
-        });
-        return;
-    }
-
-
-    if (cmd == "set-mcs") {
-        uint32_t nodeId = 0;
-        double mcsValue = 0.0;
+    // Extract nodeId
+    size_t nodePos = json.find("\"node\"");
+    if (nodePos != std::string::npos) {
+        size_t valStart = json.find(":", nodePos) + 1;
+        size_t valEnd = json.find(",", valStart);
+        if (valEnd == std::string::npos) valEnd = json.find("}", valStart);
         
-        if (!FindUint(json, "\"node\"", nodeId) || !FindNumber(json, "\"mcs\"", mcsValue)) {
-            fprintf(stderr, "[RicControlMessage] set-mcs requires node and mcs values\n");
-            return;
-        }
-        
-        int mcs = static_cast<int>(mcsValue);
-        if (mcs < 0 || mcs > 28) {
-            fprintf(stderr, "[RicControlMessage] set-mcs: MCS must be between 0 and 28, got %d\n", mcs);
-            return;
-        }
-        
-        ns3::Simulator::ScheduleNow([nodeId, mcs]() {
-            using namespace ns3;
-            
-            try {
-                // Find the mmWave eNB device for this node
-                // Keep strong references to all objects to prevent premature destruction
-                if (nodeId >= NodeList::GetNNodes()) {
-                    fprintf(stderr, "[RicControlMessage] set-mcs: node %u does not exist\n", nodeId);
-                    fflush(stderr);
-                    return;
-                }
-                
-                Ptr<Node> n = NodeList::GetNode(nodeId);
-                if (!n) {
-                    fprintf(stderr, "[RicControlMessage] set-mcs: node %u not found\n", nodeId);
-                    fflush(stderr);
-                    return;
-                }
-                
-                // Find MmWaveEnbNetDevice - keep strong reference
-                Ptr<mmwave::MmWaveEnbNetDevice> enbDev = nullptr;
-                for (uint32_t i = 0; i < n->GetNDevices(); ++i) {
-                    Ptr<NetDevice> dev = n->GetDevice(i);
-                    if (!dev) continue;
-                    enbDev = dev->GetObject<mmwave::MmWaveEnbNetDevice>();
-                    if (enbDev) break;
-                }
-                
-                if (!enbDev) {
-                    fprintf(stderr, "[RicControlMessage] set-mcs: node %u has no MmWaveEnbNetDevice\n", nodeId);
-                    fflush(stderr);
-                    return;
-                }
-                
-                // Get component carrier map and immediately extract the Ptr we need
-                // This avoids iterator invalidation issues and keeps strong references
-                std::map<uint8_t, Ptr<mmwave::MmWaveComponentCarrier>> ccMap = enbDev->GetCcMap();
-                if (ccMap.empty()) {
-                    fprintf(stderr, "[RicControlMessage] set-mcs: node %u has empty CC map\n", nodeId);
-                    fflush(stderr);
-                    return;
-                }
-                
-                // Immediately extract the Ptr<> we need to keep a strong reference
-                // Prefer key 0, but fall back to first available
-                Ptr<mmwave::MmWaveComponentCarrier> ccBase = nullptr;
-                auto ccIt = ccMap.find(0);
-                if (ccIt != ccMap.end() && ccIt->second) {
-                    ccBase = ccIt->second;  // Keep strong reference
-                } else {
-                    // Try first available
-                    ccIt = ccMap.begin();
-                    if (ccIt != ccMap.end() && ccIt->second) {
-                        ccBase = ccIt->second;  // Keep strong reference
-                    }
-                }
-                
-                // Now ccBase holds a strong reference, so the map copy can go out of scope safely
-                if (!ccBase) {
-                    fprintf(stderr,
-                            "[RicControlMessage] set-mcs: node %u has no valid component carrier entry\n",
-                            nodeId);
-                    fflush(stderr);
-                    return;
-                }
-
-                // Now safely cast to MmWaveComponentCarrierEnb
-                Ptr<mmwave::MmWaveComponentCarrierEnb> cc =
-                    DynamicCast<mmwave::MmWaveComponentCarrierEnb>(ccBase);
-                if (!cc) {
-                    fprintf(stderr,
-                            "[RicControlMessage] set-mcs: node %u component carrier is not MmWaveComponentCarrierEnb\n",
-                            nodeId);
-                    fflush(stderr);
-                    return;
-                }
-                
-                // Get the MAC scheduler - keep strong reference
-                Ptr<mmwave::MmWaveMacScheduler> sched = cc->GetMacScheduler();
-                if (!sched) {
-                    fprintf(stderr, "[RicControlMessage] set-mcs: node %u has no MAC scheduler\n", nodeId);
-                    fflush(stderr);
-                    return;
-                }
-                
-                // Cast to FlexTti scheduler to access MCS attributes
-                Ptr<mmwave::MmWaveFlexTtiMacScheduler> flexSched = 
-                    DynamicCast<mmwave::MmWaveFlexTtiMacScheduler>(sched);
-                if (!flexSched) {
-                    fprintf(stderr, "[RicControlMessage] set-mcs: node %u scheduler is not FlexTti type\n", nodeId);
-                    fflush(stderr);
-                    return;
-                }
-                
-                
-                fprintf(stderr, "[RicControlMessage] set-mcs: attempting to set MCS to %d on node %u\n", mcs, nodeId);
-                fflush(stderr);
-                
-                // Set MCS via scheduler attributes (same approach as our-v3.cc)
-                // Use try-catch to handle any attribute setting errors gracefully
-                try {
-                    if (mcs >= 0 && mcs <= 28) {
-                        flexSched->SetAttribute("FixedMcsDl", BooleanValue(true));
-                        flexSched->SetAttribute("McsDefaultDl", UintegerValue(mcs));
-                        flexSched->SetAttribute("FixedMcsUl", BooleanValue(true));
-                        flexSched->SetAttribute("McsDefaultUl", UintegerValue(mcs));
-                        fprintf(stderr, "[RicControlMessage] set-mcs: node %u MCS set to %d (DL and UL)\n", nodeId, mcs);
-                        fflush(stderr);
-                    } else {
-                        flexSched->SetAttribute("FixedMcsDl", BooleanValue(false));
-                        flexSched->SetAttribute("FixedMcsUl", BooleanValue(false));
-                        fprintf(stderr, "[RicControlMessage] set-mcs: node %u adaptive MCS restored\n", nodeId);
-                        fflush(stderr);
-                    }
-                } catch (const std::exception& e) {
-                    fprintf(stderr, "[RicControlMessage] set-mcs: exception setting attributes: %s\n", e.what());
-                    fflush(stderr);
-                } catch (...) {
-                    fprintf(stderr, "[RicControlMessage] set-mcs: unknown exception setting attributes\n");
-                    fflush(stderr);
-                }
-            } catch (const std::exception& e) {
-                fprintf(stderr, "[RicControlMessage] set-mcs: exception in lambda: %s\n", e.what());
-                fflush(stderr);
-            } catch (...) {
-                fprintf(stderr, "[RicControlMessage] set-mcs: unknown exception in lambda\n");
-                fflush(stderr);
-            }
-        });
-        return;
+        std::string valStr = json.substr(valStart, valEnd - valStart);
+        try {
+            nodeId = (uint16_t)std::stoi(valStr);
+        } catch (...) {}
     }
     
-    if (cmd == "set-bandwidth") {
-        uint32_t nodeId = 0;
-        double bwValue = 0.0;
+    // Extract value
+    size_t valPos = json.find("\"txPowerDbm\"");
+    if (valPos == std::string::npos) valPos = json.find("\"mcs\"");
+    if (valPos == std::string::npos) valPos = json.find("\"bandwidth\"");
+    
+    if (valPos != std::string::npos) {
+        size_t valStart = json.find(":", valPos) + 1;
+        size_t valEnd = json.find(",", valStart);
+        if (valEnd == std::string::npos) valEnd = json.find("}", valStart);
         
-        // nodeId is optional - if 0 or not provided, search all nodes
-        bool hasNodeId = FindUint(json, "\"node\"", nodeId);
-        if (!FindNumber(json, "\"bandwidth\"", bwValue)) {
-            fprintf(stderr, "[RicControlMessage] set-bandwidth requires bandwidth value\n");
-            return;
-        }
-        
-        uint8_t bandwidth = static_cast<uint8_t>(bwValue);
-        // if (bandwidth == 0 || bandwidth > 255) {
-        //     fprintf(stderr, "[RicControlMessage] set-bandwidth: bandwidth must be between 1 and 255, got %u\n", bandwidth);
-        //     return;
-        // }
-        
-        ns3::Simulator::ScheduleNow([hasNodeId, nodeId, bandwidth]() {
-            using namespace ns3;
-            
-            // Keep strong references to all objects
-            Ptr<mmwave::MmWaveEnbNetDevice> enbDev = nullptr;
-            uint32_t foundNodeId = 0;
-            
-            try {
-                if (hasNodeId && nodeId > 0) {
-                    // Try the specified node first
-                    if (nodeId < NodeList::GetNNodes()) {
-                        Ptr<Node> n = NodeList::GetNode(nodeId);
-                        if (n) {
-                            for (uint32_t i = 0; i < n->GetNDevices(); ++i) {
-                                Ptr<NetDevice> dev = n->GetDevice(i);
-                                if (!dev) continue;
-                                enbDev = dev->GetObject<mmwave::MmWaveEnbNetDevice>();
-                                if (enbDev) {
-                                    foundNodeId = nodeId;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // If not found and nodeId was specified, or if nodeId wasn't specified, search all nodes
-                if (!enbDev) {
-                    for (uint32_t i = 0; i < NodeList::GetNNodes(); ++i) {
-                        Ptr<Node> n = NodeList::GetNode(i);
-                        if (!n) continue;
-                        
-                        for (uint32_t j = 0; j < n->GetNDevices(); ++j) {
-                            Ptr<NetDevice> dev = n->GetDevice(j);
-                            if (!dev) continue;
-                            enbDev = dev->GetObject<mmwave::MmWaveEnbNetDevice>();
-                            if (enbDev) {
-                                foundNodeId = i;
-                                break;
-                            }
-                        }
-                        if (enbDev) break;
-                    }
-                }
-                
-                if (!enbDev) {
-                    fprintf(stderr, "[RicControlMessage] set-bandwidth: no MmWaveEnbNetDevice found in any node\n");
-                    fflush(stderr);
-                    return;
-                }
-                
-                // Validate bandwidth value
-                if (bandwidth == 0) {
-                    fprintf(stderr, "[RicControlMessage] set-bandwidth: warning - bandwidth is 0, this may be invalid\n");
-                    fflush(stderr);
-                }
-                
-                // Set bandwidth with error handling
-                // Note: SetBandwidth may need to be called at a specific time in the simulation
-                // If it crashes, the device might not be fully initialized yet
-                fprintf(stderr, "[RicControlMessage] set-bandwidth: attempting to set bandwidth to %u on node %u\n", bandwidth, foundNodeId);
-                fflush(stderr);
-                
-                // Directly call SetBandwidth with exception handling
-                try {
-                    enbDev->SetBandwidth(bandwidth);
-                    fprintf(stderr, "[RicControlMessage] set-bandwidth: SetBandwidth call succeeded\n");
-                    fflush(stderr);
-                    
-                    // Verify the value was set
-                    uint8_t bandwidth2 = enbDev->GetBandwidth();
-                    fprintf(stderr, "[RicControlMessage] set-bandwidth: node %u bandwidth set to %u (confirmed %u)\n", foundNodeId, bandwidth, bandwidth2);
-                    fflush(stderr);
-                } catch (const std::exception& e) {
-                    fprintf(stderr, "[RicControlMessage] set-bandwidth: exception setting bandwidth: %s\n", e.what());
-                    fflush(stderr);
-                } catch (...) {
-                    fprintf(stderr, "[RicControlMessage] set-bandwidth: unknown exception setting bandwidth\n");
-                    fflush(stderr);
-                }
-            } catch (const std::exception& e) {
-                fprintf(stderr, "[RicControlMessage] set-bandwidth: exception in lambda: %s\n", e.what());
-                fflush(stderr);
-            } catch (...) {
-                fprintf(stderr, "[RicControlMessage] set-bandwidth: unknown exception in lambda\n");
-                fflush(stderr);
-            }
-        });
-        return;
+        std::string valStr = json.substr(valStart, valEnd - valStart);
+        try {
+            value = std::stod(valStr);
+        } catch (...) {}
     }
-    if (cmd == "set-flow-rate") {
-        uint32_t nodeId = UINT32_MAX;  // Use max as "not specified"
-        uint32_t appIndex = 0;
-        double rateMbps = 0.0;
     
-        // node is optional - if not specified, we'll search all nodes
-        FindUint(json, "\"node\"", nodeId);
-        if (!FindUint(json, "\"app\"", appIndex) ||
-            !FindNumber(json, "\"rateMbps\"", rateMbps)) {
-            fprintf(stderr,
-                "[RicControlMessage] set-flow-rate requires app and rateMbps (node is optional)\n");
-            return;
-        }
-    
-        if (rateMbps <= 0.0) {
-            fprintf(stderr,
-                "[RicControlMessage] set-flow-rate: rateMbps must be > 0, got %f\n",
-                rateMbps);
-            return;
-        }
-    
-        ns3::Simulator::ScheduleNow([nodeId, appIndex, rateMbps]() {
-            using namespace ns3;
-    
-            try {
-                // Keep strong references to all objects
-                Ptr<OnOffApplication> onoffApp = nullptr;
-                uint32_t foundNodeId = nodeId;
-                uint32_t foundAppIndex = appIndex;
-                
-                // If node is specified, try that node first
-                if (nodeId != UINT32_MAX && nodeId < NodeList::GetNNodes()) {
-                    Ptr<Node> n = NodeList::GetNode(nodeId);
-                    if (n) {
-                        // First try the specified app index on the specified node
-                        if (appIndex < n->GetNApplications()) {
-                            Ptr<Application> app = n->GetApplication(appIndex);
-                            if (app) {
-                                onoffApp = DynamicCast<OnOffApplication>(app);
-                            }
-                        }
-                        
-                        // If not found at specified index, search all applications on this node
-                        if (!onoffApp) {
-                            for (uint32_t i = 0; i < n->GetNApplications(); ++i) {
-                                Ptr<Application> app = n->GetApplication(i);
-                                if (!app) continue;
-                                Ptr<OnOffApplication> test = DynamicCast<OnOffApplication>(app);
-                                if (test) {
-                                    onoffApp = test;
-                                    foundAppIndex = i;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // If still not found, search all nodes for OnOffApplication
-                if (!onoffApp) {
-                    fprintf(stderr, "[RicControlMessage] set-flow-rate: Searching all nodes for OnOffApplication...\n");
-                    for (uint32_t nodeIdx = 0; nodeIdx < NodeList::GetNNodes(); ++nodeIdx) {
-                        Ptr<Node> testNode = NodeList::GetNode(nodeIdx);
-                        if (!testNode) continue;
-                        
-                        for (uint32_t i = 0; i < testNode->GetNApplications(); ++i) {
-                            Ptr<Application> app = testNode->GetApplication(i);
-                            if (!app) continue;
-                            Ptr<OnOffApplication> test = DynamicCast<OnOffApplication>(app);
-                            if (test) {
-                                onoffApp = test;
-                                foundNodeId = nodeIdx;
-                                foundAppIndex = i;
-                                fprintf(stderr, "[RicControlMessage] set-flow-rate: Found OnOffApplication on node %u app %u\n",
-                                        foundNodeId, foundAppIndex);
-                                fflush(stderr);
-                                break;
-                            }
-                        }
-                        if (onoffApp) break;
-                    }
-                }
-                
-                if (!onoffApp) {
-                    Ptr<Node> n = (nodeId != UINT32_MAX && nodeId < NodeList::GetNNodes()) 
-                                  ? NodeList::GetNode(nodeId) : nullptr;
-                    if (n) {
-                        fprintf(stderr,
-                            "[RicControlMessage] set-flow-rate: node %u has no OnOffApplication (total apps: %u). Available apps:\n",
-                            nodeId, n->GetNApplications());
-                        for (uint32_t i = 0; i < n->GetNApplications(); ++i) {
-                            Ptr<Application> app = n->GetApplication(i);
-                            if (app) {
-                                fprintf(stderr, "  app[%u]: %s\n", i, app->GetInstanceTypeId().GetName().c_str());
-                            }
-                        }
-                    }
-                    fprintf(stderr, "[RicControlMessage] set-flow-rate: Searched all %u nodes, no OnOffApplication found.\n",
-                            NodeList::GetNNodes());
-                    fflush(stderr);
-                    return;
-                }
-                
-        
-                // Set DataRate attribute for OnOffApplication with exception handling
-                // Format: "50Mbps" as a string
-                try {
-                    std::ostringstream rateStr;
-                    rateStr << std::fixed << std::setprecision(2) << rateMbps << "Mbps";
-                    DataRate dataRate(rateStr.str());
-                    
-                    onoffApp->SetAttribute("DataRate", DataRateValue(dataRate));
-                    fprintf(stderr,
-                        "[RicControlMessage] set-flow-rate: node %u app %u rate set to %.2f Mbps",
-                        foundNodeId, foundAppIndex, rateMbps);
-                    if (foundNodeId != nodeId && nodeId != UINT32_MAX) {
-                        fprintf(stderr, " (searched node %u, found on node %u)", nodeId, foundNodeId);
-                    }
-                    fprintf(stderr, "\n");
-                    fflush(stderr);
-                } catch (const std::exception& e) {
-                    fprintf(stderr, "[RicControlMessage] set-flow-rate: exception setting DataRate: %s\n", e.what());
-                    fflush(stderr);
-                } catch (...) {
-                    fprintf(stderr, "[RicControlMessage] set-flow-rate: unknown exception setting DataRate\n");
-                    fflush(stderr);
-                }
-            } catch (const std::exception& e) {
-                fprintf(stderr, "[RicControlMessage] set-flow-rate: exception in lambda: %s\n", e.what());
-                fflush(stderr);
-            } catch (...) {
-                fprintf(stderr, "[RicControlMessage] set-flow-rate: unknown exception in lambda\n");
-                fflush(stderr);
-            }
-        });
-        return;
+    if (!command.empty()) {
+        ControlCommand cmd;
+        cmd.type = command;
+        cmd.targetId = nodeId;
+        cmd.value = value;
+        m_commands.push_back(cmd);
+        NS_LOG_INFO("Parsed command: " << command << " for node " << nodeId << " value " << value);
     }
-
-
-    if (cmd == "set-enb-txpower") {
-        uint32_t nodeId = 0;
-        double txPowerDbm = 0.0;
-
-        if (!FindUint(json, "\"node\"", nodeId) ||
-            !FindNumber(json, "\"txPowerDbm\"", txPowerDbm)) {
-            fprintf(stderr,
-                "[RicControlMessage] set-enb-txpower requires node and txPowerDbm\n");
-            return;
-        }
-
-        ns3::Simulator::ScheduleNow([nodeId, txPowerDbm]() {
-            using namespace ns3;
-
-            try {
-                // Keep strong references to all objects to prevent premature destruction
-                if (nodeId >= NodeList::GetNNodes()) {
-                    fprintf(stderr,
-                        "[RicControlMessage] set-enb-txpower: node %u does not exist\n",
-                        nodeId);
-                    fflush(stderr);
-                    return;
-                }
-
-                Ptr<Node> n = NodeList::GetNode(nodeId);
-                if (!n) {
-                    fprintf(stderr,
-                        "[RicControlMessage] set-enb-txpower: node %u not found\n",
-                        nodeId);
-                    fflush(stderr);
-                    return;
-                }
-
-                // Find MmWaveEnbNetDevice - keep strong reference
-                Ptr<mmwave::MmWaveEnbNetDevice> enbDev = nullptr;
-                for (uint32_t i = 0; i < n->GetNDevices(); ++i) {
-                    Ptr<NetDevice> dev = n->GetDevice(i);
-                    if (!dev) continue;
-                    enbDev = dev->GetObject<mmwave::MmWaveEnbNetDevice>();
-                    if (enbDev) break;
-                }
-
-                if (!enbDev) {
-                    fprintf(stderr,
-                        "[RicControlMessage] set-enb-txpower: node %u has no MmWaveEnbNetDevice\n",
-                        nodeId);
-                    fflush(stderr);
-                    return;
-                }
-
-                // Get PHY through component carrier (safer approach)
-                // Extract Ptr immediately to keep strong reference and avoid iterator issues
-                std::map<uint8_t, Ptr<mmwave::MmWaveComponentCarrier>> ccMap = enbDev->GetCcMap();
-                if (ccMap.empty()) {
-                    fprintf(stderr,
-                        "[RicControlMessage] set-enb-txpower: node %u has empty CC map\n",
-                        nodeId);
-                    fflush(stderr);
-                    return;
-                }
-                
-                // Immediately extract the Ptr<> to keep a strong reference
-                // Prefer key 0, but fall back to first available
-                Ptr<mmwave::MmWaveComponentCarrier> ccBase = nullptr;
-                auto ccIt = ccMap.find(0);
-                if (ccIt != ccMap.end() && ccIt->second) {
-                    ccBase = ccIt->second;  // Keep strong reference
-                } else {
-                    ccIt = ccMap.begin();
-                    if (ccIt != ccMap.end() && ccIt->second) {
-                        ccBase = ccIt->second;  // Keep strong reference
-                    }
-                }
-                
-                if (!ccBase) {
-                    fprintf(stderr,
-                        "[RicControlMessage] set-enb-txpower: node %u has no valid component carrier entry\n",
-                        nodeId);
-                    fflush(stderr);
-                    return;
-                }
-                
-                // Now safely cast to MmWaveComponentCarrierEnb
-                Ptr<mmwave::MmWaveComponentCarrierEnb> cc = 
-                    DynamicCast<mmwave::MmWaveComponentCarrierEnb>(ccBase);
-                if (!cc) {
-                    fprintf(stderr,
-                        "[RicControlMessage] set-enb-txpower: node %u component carrier is not MmWaveComponentCarrierEnb\n",
-                        nodeId);
-                    fflush(stderr);
-                    return;
-                }
-                
-                // Get PHY - keep strong reference
-                Ptr<mmwave::MmWaveEnbPhy> phy = cc->GetPhy();
-                if (!phy) {
-                    fprintf(stderr,
-                        "[RicControlMessage] set-enb-txpower: node %u has no PHY\n",
-                        nodeId);
-                    fflush(stderr);
-                    return;
-                }
-                
-
-                fprintf(stderr,
-                    "[RicControlMessage] set-enb-txpower: attempting to set TxPower to %.2f dBm on node %u\n",
-                    txPowerDbm, nodeId);
-                fflush(stderr);
-
-                // Use SetAttribute with exception handling (safer, matches LTE code pattern)
-                try {
-                    phy->SetAttribute("TxPower", DoubleValue(txPowerDbm));
-                    fprintf(stderr,
-                        "[RicControlMessage] set-enb-txpower: node %u TxPower set to %.2f dBm\n",
-                        nodeId, txPowerDbm);
-                    fflush(stderr);
-                } catch (const std::exception& e) {
-                    fprintf(stderr, "[RicControlMessage] set-enb-txpower: exception setting TxPower: %s\n", e.what());
-                    fflush(stderr);
-                } catch (...) {
-                    fprintf(stderr, "[RicControlMessage] set-enb-txpower: unknown exception setting TxPower\n");
-                    fflush(stderr);
-                }
-            } catch (const std::exception& e) {
-                fprintf(stderr, "[RicControlMessage] set-enb-txpower: exception in lambda: %s\n", e.what());
-                fflush(stderr);
-            } catch (...) {
-                fprintf(stderr, "[RicControlMessage] set-enb-txpower: unknown exception in lambda\n");
-                fflush(stderr);
-            }
-        });
-        return;
-    }
-
-    fprintf(stderr, "[RicControlMessage] Unknown cmd='%s' (valid commands: move-enb, stop, set-mcs, set-bandwidth, set-tdd-pattern, handover-trigger)\n", cmd.c_str());
-    fflush(stderr);
-}
-
-
-
-
-RicControlMessage::RicControlMessage (E2AP_PDU_t* pdu)
-{
-  DecodeRicControlMessage (pdu);
-  NS_LOG_INFO ("End of RicControlMessage::RicControlMessage()");
-}
-
-RicControlMessage::~RicControlMessage ()
-{
-
 }
 
 void
@@ -857,7 +242,7 @@ RicControlMessage::DecodeRicControlMessage(E2AP_PDU_t* pdu)
     if (!ascii.empty()) {
         fprintf(stderr, "[RicControlMessage] Calling ApplySimpleCommand with: '%s'\n", ascii.c_str());
         fflush(stderr);
-        ApplySimpleCommand(ascii);
+        ParseSimpleCommand(ascii);
     } else {
         fprintf(stderr, "[RicControlMessage] ERROR: Control message payload is empty, cannot apply command\n");
         fflush(stderr);
@@ -893,4 +278,6 @@ RicControlMessage::ExtractRANParametersFromControlMessage (
   return ranParameterList;
 }
 
+RicControlMessage::RicControlMessage(E2AP_PDU_t* pdu) { DecodeRicControlMessage(pdu); }
+RicControlMessage::~RicControlMessage() {}
 } // namespace ns3

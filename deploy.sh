@@ -17,7 +17,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-PROJECT_ROOT="/home/hybrid/proj/simulator-bridge"
+PROJECT_ROOT="/home/hybrid/proj/"
 SETUP_SCRIPTS_DIR="${PROJECT_ROOT}/colosseum-near-rt-ric/setup-scripts"
 SAMPLE_XAPP_DIR="${PROJECT_ROOT}/colosseum-near-rt-ric/setup/sample-xapp"
 NS3_DIR="${PROJECT_ROOT}/ns-3-mmwave-oran"
@@ -27,6 +27,7 @@ RELAY_SERVER_SCRIPT="${PROJECT_ROOT}/ai_relay_server.py"
 RELAY_LOG_FILE="${PROJECT_ROOT}/relay_server.log"
 XAPP_CONTAINER_NAME="sample-xapp-24"
 RELAY_PID_FILE="${PROJECT_ROOT}/.relay_server.pid"
+EXTERNAL_AI_IP="130.240.5.17"  # Default remote AI IP
 
 # Flags
 SKIP_IMPORT=false
@@ -72,9 +73,13 @@ while [[ $# -gt 0 ]]; do
             NON_INTERACTIVE=true
             shift
             ;;
+        --ai-ip)
+            EXTERNAL_AI_IP="$2"
+            shift 2
+            ;;
         *)
             echo -e "${RED}Unknown option: $1${NC}"
-            echo "Usage: $0 [--skip-import] [--skip-ric] [--skip-xapp] [--skip-ns3] [--skip-relay] [--scenario <file.cc>] [--background] [--non-interactive|-y]"
+            echo "Usage: $0 [--skip-import] [--skip-ric] [--skip-xapp] [--skip-ns3] [--skip-relay] [--scenario <file.cc>] [--ai-ip <ip>] [--background] [--non-interactive|-y]"
             exit 1
             ;;
     esac
@@ -268,6 +273,9 @@ start_relay_server() {
     
     # Start relay server in background
     cd "$PROJECT_ROOT" || exit 1
+    export EXTERNAL_AI_HOST="$EXTERNAL_AI_IP"
+    echo "[RELAY]   EXTERNAL_AI_HOST=${EXTERNAL_AI_HOST} (default: 13.240.5.17)"
+    echo "[RELAY]   EXTERNAL_AI_PORT=${EXTERNAL_AI_PORT} (default: 6000)"
     nohup python3 "$RELAY_SERVER_SCRIPT" > "$RELAY_LOG_FILE" 2>&1 &
     local pid=$!
     echo "$pid" > "$RELAY_PID_FILE"
