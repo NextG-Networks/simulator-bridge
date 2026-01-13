@@ -6,7 +6,7 @@ This repository contains the tools and scripts required to deploy the **Simulato
 
 ## Repositories
 
-- Simulator Bridgehttps://github.com/NextG-Networks/simulator-bridge
+- Simulator Bridge https://github.com/NextG-Networks/simulator-bridge
 - Hybrid AI
   https://github.com/NextG-Networks/hybridAI-nextG
 
