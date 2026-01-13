@@ -1,7 +1,5 @@
 # Quick Start Guide - Grafana Dashboard
 
-> **For detailed step-by-step instructions, see [START_TUTORIAL.md](START_TUTORIAL.md)**
-
 ## Automated Deployment (Recommended)
 
 ```bash
@@ -14,26 +12,26 @@ This will automatically set up everything. Done!
 ## Manual Quick Setup (5 minutes)
 
 1. **Install dependencies**:
+
    ```bash
    cd ai-dashboard
    ./install_dashboard.sh
    ```
-
 2. **Set up and start services**:
+
    ```bash
    ./setup_grafana.sh
    docker compose up -d
    ```
-
 3. **Import CSV data** (if you have existing data):
+
    ```bash
    source venv/bin/activate  # if using venv
    python3 import_csv_data.py
    ```
-
 4. **Access Grafana**: http://localhost:3000 (admin/admin)
-
 5. **Start real-time updates**:
+
    ```bash
    python3 csv_to_influxdb.py
    ```
@@ -59,6 +57,7 @@ python3 verify_setup.py
 ```
 
 You should now see:
+
 - ✅ Recent data: Found
 
 ## Step 3: Fix Dashboard in Grafana
@@ -66,6 +65,7 @@ You should now see:
 The dashboard may not appear automatically. Try these options:
 
 ### Option A: Restart Grafana (if not done already)
+
 ```bash
 cd ai-dashboard
 docker compose restart grafana
@@ -105,6 +105,7 @@ python3 csv_to_influxdb.py
 ```
 
 This will:
+
 - Watch for CSV file changes
 - Automatically write new data to InfluxDB
 - Keep running until you press Ctrl+C
@@ -137,4 +138,3 @@ Once everything is working:
 2. **Access dashboard**: http://localhost:3000/d/ns3-kpis-dashboard
 3. **Adjust time range** as needed in the dashboard
 4. **Filter by Cell/UE** using the dropdowns (if you add them back)
-

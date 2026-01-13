@@ -191,7 +191,7 @@
             "mode": "palette-classic"
           },
           "custom": {
-            "axisLabel": "ms",
+            "axisLabel": "Throughput",
             "axisPlacement": "auto",
             "drawStyle": "line",
             "fillOpacity": 10,
@@ -200,7 +200,7 @@
             "pointSize": 5,
             "showPoints": "never"
           },
-          "unit": "ms"
+          "unit": "kbits"
         }
       },
       "gridPos": {
@@ -234,7 +234,7 @@
             "mode": "palette-classic"
           },
           "custom": {
-            "axisLabel": "ms",
+            "axisLabel": "Throughput",
             "axisPlacement": "auto",
             "drawStyle": "line",
             "fillOpacity": 10,
@@ -243,7 +243,7 @@
             "pointSize": 5,
             "showPoints": "never"
           },
-          "unit": "ms"
+          "unit": "kbits"
         }
       },
       "gridPos": {
