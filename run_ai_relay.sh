@@ -1,6 +1,10 @@
 #!/bin/bash
 # Run the AI Relay Server
 
+# Dynamically determine script directory and change to it
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR" || exit 1
+
 echo "Starting AI Relay Server..."
 echo ""
 echo "Configuration:"

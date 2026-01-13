@@ -354,10 +354,9 @@ set(header_files
 )
 
 include_directories(${e2sim_INCLUDE_DIRS})
-include_directories(/home/hybrid/proj/oran-e2sim/e2sim/src/ASN1c)
-include_directories(/home/hybrid/proj/oran-e2sim/e2sim/e2sm_examples/kpm_e2sm/src/ASN1c)
-include_directories(/home/hybrid/proj/oran-e2sim/e2sim/src/base)
-include_directories(/home/hybrid/proj/oran-e2sim/e2sim/src/encoding)
+# Use relative paths from ns-3 root to oran-e2sim (sibling directory)
+# Get absolute path to avoid CMake INTERFACE_INCLUDE_DIRECTORIES restrictions
+get_filename_component(ORAN_E2SIM_DIR "${CMAKE_SOURCE_DIR}/../oran-e2sim" ABSOLUTE)
 
 build_lib(
   LIBNAME lte
@@ -379,4 +378,19 @@ build_lib(
     ${liboran-interface}
   TEST_SOURCES ${test_sources}
   MODULE_ENABLED_FEATURES ${emu_features}
+)
+
+# Add oran-e2sim include directories as SYSTEM PRIVATE to both object and main library
+# SYSTEM marks them as system headers (suppresses warnings), PRIVATE means they're only for this target
+target_include_directories(${liblte-obj} PRIVATE SYSTEM
+  ${ORAN_E2SIM_DIR}/e2sim/src/ASN1c
+  ${ORAN_E2SIM_DIR}/e2sim/e2sm_examples/kpm_e2sm/src/ASN1c
+  ${ORAN_E2SIM_DIR}/e2sim/src/base
+  ${ORAN_E2SIM_DIR}/e2sim/src/encoding
+)
+target_include_directories(${liblte} PRIVATE SYSTEM
+  ${ORAN_E2SIM_DIR}/e2sim/src/ASN1c
+  ${ORAN_E2SIM_DIR}/e2sim/e2sm_examples/kpm_e2sm/src/ASN1c
+  ${ORAN_E2SIM_DIR}/e2sim/src/base
+  ${ORAN_E2SIM_DIR}/e2sim/src/encoding
 )

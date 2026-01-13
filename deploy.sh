@@ -17,7 +17,9 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-PROJECT_ROOT="/home/hybrid/proj/"
+# Dynamically determine project root (works from any location)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="${PROJECT_ROOT:-$SCRIPT_DIR}"
 SETUP_SCRIPTS_DIR="${PROJECT_ROOT}/colosseum-near-rt-ric/setup-scripts"
 SAMPLE_XAPP_DIR="${PROJECT_ROOT}/colosseum-near-rt-ric/setup/sample-xapp"
 NS3_DIR="${PROJECT_ROOT}/ns-3-mmwave-oran"
