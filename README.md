@@ -16,7 +16,7 @@ This repository contains the tools and scripts required to deploy the **Simulato
 
 Ensure the following are installed before continuing:
 
-- Linux (Ubuntu recommended)
+- Linux (Ubuntu recommended, we used version 24.04 LTE)
 - `git`
 - `docker` and `docker-compose`
 - `cmake`, `make`, `gcc/g++`
