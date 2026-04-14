@@ -218,6 +218,17 @@ def process_kpi_for_csv(msg):
     except Exception as e:
         print(f"[RELAY] Error processing KPI for CSV: {e}")
 
+CHAOS_TRIGGER_FILE = "/tmp/chaos_trigger.txt"
+
+def write_chaos_trigger(event):
+    """Write a chaos event to the trigger file for ns-3 to pick up"""
+    try:
+        with open(CHAOS_TRIGGER_FILE, 'w') as f:
+            f.write(event)
+        print(f"[RELAY] Wrote chaos trigger: {event}")
+    except Exception as e:
+        print(f"[RELAY] Failed to write chaos trigger: {e}")
+
 def recv_framed(conn):
     """Receive a length-prefixed frame from connection"""
     try:
@@ -299,7 +310,7 @@ def receive_from_ai(conn):
                     meid = msg.get("meid", "")
                     cmd = msg.get("cmd", {})
                     print(f"[RELAY] → Forwarding control command to xApp: meid={meid}, cmd={cmd}")
-                    
+
                     with connections_lock:
                         if not xapp_connections:
                             print(f"[RELAY] ⚠️  No xApp connections available, dropping command")
@@ -313,6 +324,13 @@ def receive_from_ai(conn):
                                         print(f"[RELAY] ❌ Failed to forward to xApp {addr}")
                                 except Exception as e:
                                     print(f"[RELAY] ❌ Error forwarding to xApp {addr}: {e}")
+                elif msg_type == "chaos":
+                    # Write chaos trigger file for ns-3 to pick up
+                    event = msg.get("event", "")
+                    if event:
+                        write_chaos_trigger(event)
+                    else:
+                        print(f"[RELAY] Chaos message missing 'event' field")
                 else:
                     print(f"[RELAY] ⚠️  Unknown message type from AI: {msg_type}")
                     
@@ -442,11 +460,23 @@ def handle_command_interface(conn, addr):
             meid = cmd_json.get("meid", "")
             cmd = cmd_json.get("cmd", {})
             
+            # Handle chaos commands (no meid/cmd required)
+            msg_type = cmd_json.get("type", "")
+            if msg_type == "chaos":
+                event = cmd_json.get("event", "")
+                if event:
+                    write_chaos_trigger(event)
+                    response = {"status": "ok", "message": f"Chaos trigger written: {event}"}
+                else:
+                    response = {"status": "error", "message": "Missing 'event' field"}
+                conn.sendall(json.dumps(response).encode("utf-8"))
+                return
+
             if not meid or not cmd:
                 response = {"status": "error", "message": "Missing 'meid' or 'cmd' field"}
                 conn.sendall(json.dumps(response).encode("utf-8"))
                 return
-            
+
             # Format as control message
             control_msg = {
                 "type": "control",

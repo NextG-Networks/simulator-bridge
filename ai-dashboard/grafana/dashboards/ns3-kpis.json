@@ -1,9 +1,6 @@
 {
   "title": "NS3 KPI Dashboard",
-  "tags": [
-    "ns3",
-    "kpi"
-  ],
+  "tags": ["ns3", "kpi"],
   "timezone": "browser",
   "refresh": "5s",
   "time": {
@@ -31,9 +28,7 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "color": {"mode": "palette-classic"},
           "custom": {
             "axisLabel": "",
             "axisPlacement": "auto",
@@ -48,24 +43,14 @@
         }
       },
       "options": {
-        "tooltip": {
-          "mode": "multi"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
+        "tooltip": {"mode": "multi"},
+        "legend": {"displayMode": "list", "placement": "bottom"}
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 0
-      }
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
     },
     {
       "id": 2,
-      "title": "UE0 KPIs (Node 3)",
+      "title": "UE KPIs",
       "type": "timeseries",
       "datasource": {
         "type": "influxdb",
@@ -73,7 +58,7 @@
       },
       "targets": [
         {
-          "query": "from(bucket: \"ns3-kpis\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"_measurement\"] == \"ue_kpis\") |> filter(fn: (r) => r[\"node_id\"] == \"3\") |> filter(fn: (r) => r[\"_field\"] != \"DRB_UEThpDl_UEID\")",
+          "query": "from(bucket: \"ns3-kpis\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"_measurement\"] == \"ue_kpis\")",
           "refId": "A",
           "datasource": {
             "type": "influxdb",
@@ -83,9 +68,7 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "color": {"mode": "palette-classic"},
           "custom": {
             "axisLabel": "",
             "axisPlacement": "auto",
@@ -100,158 +83,10 @@
         }
       },
       "options": {
-        "tooltip": {
-          "mode": "multi"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
+        "tooltip": {"mode": "multi"},
+        "legend": {"displayMode": "list", "placement": "bottom"}
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 0
-      }
-    },
-    {
-      "id": 3,
-      "title": "UE1 KPIs (Node 4)",
-      "type": "timeseries",
-      "datasource": {
-        "type": "influxdb",
-        "uid": "InfluxDB"
-      },
-      "targets": [
-        {
-          "query": "from(bucket: \"ns3-kpis\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"_measurement\"] == \"ue_kpis\") |> filter(fn: (r) => r[\"node_id\"] == \"4\") |> filter(fn: (r) => r[\"_field\"] != \"DRB_UEThpDl_UEID\")",
-          "refId": "A",
-          "datasource": {
-            "type": "influxdb",
-            "uid": "InfluxDB"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "showPoints": "never"
-          },
-          "unit": "short"
-        }
-      },
-      "options": {
-        "tooltip": {
-          "mode": "multi"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 8
-      }
-    },
-    {
-      "id": 4,
-      "title": "UE0 Throughput (DRB_UEThpDl)",
-      "type": "timeseries",
-      "datasource": {
-        "type": "influxdb",
-        "uid": "InfluxDB"
-      },
-      "targets": [
-        {
-          "query": "from(bucket: \"ns3-kpis\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"_measurement\"] == \"ue_kpis\") |> filter(fn: (r) => r[\"node_id\"] == \"3\") |> filter(fn: (r) => r[\"_field\"] == \"DRB_UEThpDl_UEID\")",
-          "refId": "A",
-          "datasource": {
-            "type": "influxdb",
-            "uid": "InfluxDB"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "Throughput",
-            "axisPlacement": "auto",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "showPoints": "never"
-          },
-          "unit": "kbits"
-        }
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 8
-      }
-    },
-    {
-      "id": 5,
-      "title": "UE1 Throughput (DRB_UEThpDl)",
-      "type": "timeseries",
-      "datasource": {
-        "type": "influxdb",
-        "uid": "InfluxDB"
-      },
-      "targets": [
-        {
-          "query": "from(bucket: \"ns3-kpis\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"_measurement\"] == \"ue_kpis\") |> filter(fn: (r) => r[\"node_id\"] == \"4\") |> filter(fn: (r) => r[\"_field\"] == \"DRB_UEThpDl_UEID\")",
-          "refId": "A",
-          "datasource": {
-            "type": "influxdb",
-            "uid": "InfluxDB"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "Throughput",
-            "axisPlacement": "auto",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "showPoints": "never"
-          },
-          "unit": "kbits"
-        }
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 16
-      }
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
     }
   ],
   "schemaVersion": 38,

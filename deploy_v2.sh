@@ -17,6 +17,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
+PERF_FLAGS="--fastMode=true --reducedPmValues=false --enableE2FileLogging=false"
+
 # Dynamically determine project root (works from any location)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${PROJECT_ROOT:-$SCRIPT_DIR}"
@@ -65,6 +67,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --scenario)
             NS3_SCENARIO="$2"
+            shift 2
+            ;;
+        --ns3-args)
+            EXTRA_NS3_ARGS="$2"
             shift 2
             ;;
         --background)
@@ -660,18 +666,17 @@ if [ "$SKIP_NS3" = false ]; then
 
     log_info "Starting ns-3 simulation: scratch/${NS3_SCENARIO}"
 
+    # Construct the command
+    CMD="./ns3 run scratch/${NS3_SCENARIO} -- ${PERF_FLAGS} ${EXTRA_NS3_ARGS}"
+
+    log_info "Executing: $CMD"
+
     if [ "$RUN_BACKGROUND" = true ]; then
-        log_info "Running ns-3 simulation in background..."
-        nohup ./ns3 run "scratch/${NS3_SCENARIO}" > ns3_simulation.log 2>&1 &
+        nohup $CMD > ns3_simulation.log 2>&1 &
         NS3_PID=$!
         log_success "ns-3 simulation started in background (PID: $NS3_PID)"
-        log_info "Logs are being written to: $NS3_DIR/ns3_simulation.log"
-        log_info "To view logs: tail -f $NS3_DIR/ns3_simulation.log"
-        log_info "To stop: kill $NS3_PID"
     else
-        log_info "Running ns-3 simulation in foreground..."
-        log_info "Press Ctrl+C to stop the simulation"
-        run_step "Run ns-3 simulation" "./ns3 run scratch/${NS3_SCENARIO}"
+        eval $CMD
     fi
 else
     log_warning "Skipping ns-3 simulation (--skip-ns3 flag set)"

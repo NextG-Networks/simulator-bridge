@@ -176,3 +176,6 @@ visual/netanim/build
 
 gnb_kpis.csv
 ue_kpis.csv
+
+# this file is so long i hope it still works if i .gitignore it
+ns-3-mmwave-oran/out/logs/UlPhyTransmissionTrace.txt

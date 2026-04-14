@@ -34,122 +34,159 @@ last_ue_row = 0
 
 class CSVHandler(FileSystemEventHandler):
     """Handle CSV file changes"""
-    
+
     def __init__(self, client, write_api):
         self.client = client
         self.write_api = write_api
         self.last_gnb_row = 0
         self.last_ue_row = 0
-    
+        # Cache column metadata so we don't recompute per event
+        self._gnb_numeric_cols = None
+        self._gnb_header = None
+        self._ue_numeric_cols = None
+        self._ue_header = None
+
+    def _read_new_rows(self, file_path, skip_rows, **read_kwargs):
+        """Read only new rows from a CSV by skipping already-processed ones."""
+        # First pass: read header if we don't have it yet
+        header = pd.read_csv(file_path, nrows=0, **read_kwargs)
+        # Read only new rows (skip header + already processed rows)
+        if skip_rows > 0:
+            df = pd.read_csv(file_path, skiprows=range(1, skip_rows + 1), **read_kwargs)
+        else:
+            df = pd.read_csv(file_path, **read_kwargs)
+        return df, header.columns.tolist()
+
     def process_gnb_csv(self, file_path):
         """Process gNB CSV file and write to InfluxDB"""
         try:
-            df = pd.read_csv(file_path)
-            if df.empty:
-                return
-            
-            # Process only new rows
-            new_rows = df.iloc[self.last_gnb_row:]
+            new_rows, columns = self._read_new_rows(file_path, self.last_gnb_row)
             if new_rows.empty:
                 return
-            
+
+            # Cache numeric columns on first run or when schema changes
+            if self._gnb_numeric_cols is None or self._gnb_header != columns:
+                self._gnb_header = columns
+                self._gnb_numeric_cols = [
+                    col for col in columns
+                    if col not in ['timestamp', 'cell_id', 'meid', 'format']
+                    and pd.api.types.is_numeric_dtype(new_rows[col])
+                ]
+
+            has_timestamp = 'timestamp' in columns
+            has_cell_id = 'cell_id' in columns
+            numeric_cols = self._gnb_numeric_cols
+
             points = []
-            for _, row in new_rows.iterrows():
-                # Create a point for each row
+            for row in new_rows.itertuples(index=False):
                 point = Point("gnb_kpis")
-                
-                # Add timestamp
-                if 'timestamp' in row:
-                    if pd.notna(row['timestamp']):
+
+                if has_timestamp:
+                    ts_val = getattr(row, 'timestamp', None)
+                    if pd.notna(ts_val):
                         try:
-                            # Try to parse as milliseconds timestamp
-                            ts = pd.to_datetime(row['timestamp'], unit='ms', errors='coerce')
+                            ts = pd.to_datetime(ts_val, unit='ms', errors='coerce')
                             if pd.notna(ts):
                                 point.time(ts)
                         except:
                             pass
-                
-                # Add tags (dimensions)
-                if 'cell_id' in row and pd.notna(row['cell_id']) and str(row['cell_id']).upper() != 'N/A':
-                    point.tag("cell_id", str(row['cell_id']))
-                
-                # Add fields (metrics)
-                for col in df.columns:
-                    if col not in ['timestamp', 'cell_id', 'meid', 'format']:
-                        if pd.api.types.is_numeric_dtype(df[col]):
-                            if pd.notna(row[col]):
-                                point.field(col, float(row[col]))
-                
+
+                if has_cell_id:
+                    cell_val = getattr(row, 'cell_id', None)
+                    if pd.notna(cell_val) and str(cell_val).upper() != 'N/A':
+                        point.tag("cell_id", str(cell_val))
+
+                for col in numeric_cols:
+                    val = getattr(row, col, None)
+                    if val is not None and pd.notna(val):
+                        point.field(col, float(val))
+
                 points.append(point)
-            
+
             if points:
                 self.write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=points)
-                self.last_gnb_row = len(df)
+                self.last_gnb_row += len(new_rows)
                 print(f"[InfluxDB] Wrote {len(points)} gNB data points")
-        
+
         except Exception as e:
             print(f"[InfluxDB] Error processing gNB CSV: {e}")
-    
+
     def process_ue_csv(self, file_path):
-    #"""Process UE CSV file and write to InfluxDB"""
+        """Process UE CSV file and write to InfluxDB"""
         try:
-            # Read CSV with flexible error handling
+            read_kwargs = {}
             try:
-                df = pd.read_csv(file_path, on_bad_lines='skip', engine='python')
+                new_rows, columns = self._read_new_rows(file_path, self.last_ue_row,
+                                                         on_bad_lines='skip', engine='python')
             except TypeError:
-                df = pd.read_csv(file_path, error_bad_lines=False, warn_bad_lines=True, engine='python')
-            
-            if df.empty:
-                return
-            
-            # Process only new rows
-            new_rows = df.iloc[self.last_ue_row:]
+                new_rows, columns = self._read_new_rows(file_path, self.last_ue_row,
+                                                         error_bad_lines=False, warn_bad_lines=True,
+                                                         engine='python')
+
             if new_rows.empty:
                 return
-            
+
             # Handle node_id column if it exists
-            if 'node_id' not in df.columns:
-                unnamed_cols = [col for col in df.columns if 'Unnamed' in str(col)]
+            if 'node_id' not in new_rows.columns:
+                unnamed_cols = [col for col in new_rows.columns if 'Unnamed' in str(col)]
                 if unnamed_cols:
-                    df = df.rename(columns={unnamed_cols[0]: 'node_id'})
-            
+                    new_rows = new_rows.rename(columns={unnamed_cols[0]: 'node_id'})
+                    columns = new_rows.columns.tolist()
+
+            # Cache numeric columns on first run or when schema changes
+            if self._ue_numeric_cols is None or self._ue_header != columns:
+                self._ue_header = columns
+                self._ue_numeric_cols = [
+                    col for col in columns
+                    if col not in ['timestamp', 'ue_id', 'cell_id', 'meid', 'node_id']
+                    and pd.api.types.is_numeric_dtype(new_rows[col])
+                ]
+
+            has_timestamp = 'timestamp' in columns
+            has_ue_id = 'ue_id' in columns
+            has_cell_id = 'cell_id' in columns
+            has_node_id = 'node_id' in columns
+            numeric_cols = self._ue_numeric_cols
+
             points = []
-            for _, row in new_rows.iterrows():
-                # Create a point for each row
+            for row in new_rows.itertuples(index=False):
                 point = Point("ue_kpis")
-                
-                # Add timestamp
-                if 'timestamp' in row:
-                    if pd.notna(row['timestamp']):
+
+                if has_timestamp:
+                    ts_val = getattr(row, 'timestamp', None)
+                    if pd.notna(ts_val):
                         try:
-                            ts = pd.to_datetime(row['timestamp'], unit='ms', errors='coerce')
+                            ts = pd.to_datetime(ts_val, unit='ms', errors='coerce')
                             if pd.notna(ts):
                                 point.time(ts)
                         except:
                             pass
-                
-                # Add tags (dimensions)
-                if 'ue_id' in row and pd.notna(row['ue_id']) and str(row['ue_id']).upper() != 'N/A':
-                    point.tag("ue_id", str(row['ue_id']))
-                if 'cell_id' in row and pd.notna(row['cell_id']) and str(row['cell_id']).upper() != 'N/A':
-                    point.tag("cell_id", str(row['cell_id']))
-                if 'node_id' in row and pd.notna(row['node_id']):
-                    point.tag("node_id", str(int(row['node_id'])))
-                
-                # Add fields (metrics)
-                for col in df.columns:
-                    if col not in ['timestamp', 'ue_id', 'cell_id', 'meid', 'node_id']:
-                        if pd.api.types.is_numeric_dtype(df[col]):
-                            if pd.notna(row[col]):
-                                point.field(col, float(row[col]))
-                
+
+                if has_ue_id:
+                    ue_val = getattr(row, 'ue_id', None)
+                    if pd.notna(ue_val) and str(ue_val).upper() != 'N/A':
+                        point.tag("ue_id", str(ue_val))
+                if has_cell_id:
+                    cell_val = getattr(row, 'cell_id', None)
+                    if pd.notna(cell_val) and str(cell_val).upper() != 'N/A':
+                        point.tag("cell_id", str(cell_val))
+                if has_node_id:
+                    node_val = getattr(row, 'node_id', None)
+                    if pd.notna(node_val):
+                        point.tag("node_id", str(int(node_val)))
+
+                for col in numeric_cols:
+                    val = getattr(row, col, None)
+                    if val is not None and pd.notna(val):
+                        point.field(col, float(val))
+
                 points.append(point)
-            
+
             if points:
                 self.write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=points)
-                self.last_ue_row = len(df)
+                self.last_ue_row += len(new_rows)
                 print(f"[InfluxDB] Wrote {len(points)} UE data points")
-        
+
         except Exception as e:
             print(f"[InfluxDB] Error processing UE CSV: {e}")
     
