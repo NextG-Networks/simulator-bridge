@@ -667,7 +667,7 @@ if [ "$SKIP_NS3" = false ]; then
     log_info "Starting ns-3 simulation: scratch/${NS3_SCENARIO}"
 
     # Construct the command
-    CMD="./ns3 run scratch/${NS3_SCENARIO} -- ${PERF_FLAGS} ${EXTRA_NS3_ARGS}"
+    CMD="./ns3 run scratch/${NS3_SCENARIO} ${EXTRA_NS3_ARGS}"
 
     log_info "Executing: $CMD"
 

@@ -21,6 +21,7 @@
 #include "ns3/mmwave-component-carrier-enb.h"
 #include "ns3/mmwave-flex-tti-mac-scheduler.h"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -35,9 +36,12 @@ namespace fs = std::filesystem;
 
 NS_LOG_COMPONENT_DEFINE("MVS_Mmwave_1gNB_1UE_v3");
 
+//simulation
+static const double sim_duration = 180.0;
+
 // ---------------- Runtime flags ----------------
 static GlobalValue g_simTime("simTime", "Simulation time (s)",
-  DoubleValue(3599.0), MakeDoubleChecker<double>(1.0, 3600.0));
+  DoubleValue(sim_duration), MakeDoubleChecker<double>(1.0, 3600.0)); 
 static GlobalValue g_outDir("outDir", "Output directory",
   StringValue("out/logs"), MakeStringChecker());
 
@@ -65,9 +69,6 @@ static GlobalValue g_enableE2FileLogging ("enableE2FileLogging","Offline file lo
 static GlobalValue g_reducedPmValues ("reducedPmValues", "If true, use a subset of the pm containers",
                                       BooleanValue(false), MakeBooleanChecker());
 
-
-
- 
 // ---------------- Timeseries sampler (drop-in)// Global variables
 struct GlobalState {
   double lastT = 0.0;
@@ -77,6 +78,21 @@ struct GlobalState {
   double lastPingMs = 0.0;
 } gS;
 
+enum RandomEventType {
+    EVENT_NONE,
+    EVENT_BLOCKAGE,
+    EVENT_TRAFFIC_SPIKE
+};
+
+struct RandomEventState {
+    RandomEventType activeEvent = EVENT_NONE;
+    uint32_t affectedIdx = 0;
+    double originalValue = 0.0;
+    Ptr<mmwave::MmWaveUePhy> affectedPhy = nullptr;
+    Ptr<OnOffApplication> affectedApp = nullptr;
+    DataRate originalRate;
+} g_eventState;
+
 // Event tracking globals
 static std::string g_activeMcsEvent = "None";
 static bool g_activeBlockage = false;
@@ -85,6 +101,62 @@ static bool g_activeTrafficSpike = false;
 static uint32_t g_trafficSpikeRhIdx = 0;
 
 AnimationInterface *g_anim = nullptr; // Global pointer for NetAnim updates
+
+// ================================================================
+//  Progress printer — every 1 sim-second AND at least every 10 real seconds
+// ================================================================
+static auto g_realStart = std::chrono::steady_clock::now();
+static double g_lastPrintReal = 0.0;
+
+static void PrintProgress() {
+  auto elapsed = std::chrono::steady_clock::now() - g_realStart;
+  double realSec = std::chrono::duration<double>(elapsed).count();
+  double simSec = Simulator::Now().GetSeconds();
+
+  DoubleValue simV;
+  GlobalValue::GetValueByName("simTime", simV);
+  double stopTime = simV.Get();
+
+  double ratio = (realSec > 0.0) ? (simSec / realSec) : 0.0;
+  double pct = (stopTime > 0.0) ? (simSec / stopTime * 100.0) : 0.0;
+
+  // Print if ≥10 real seconds since last print, or always (1 sim-sec cadence)
+  if ((realSec - g_lastPrintReal) >= 10.0 || simSec <= 1.0 ||
+      static_cast<int>(simSec) % 1 == 0) {
+    std::cout << "  [SIM] t=" << std::fixed << std::setprecision(1)
+      << simSec << "/" << stopTime << "s  "
+      << std::setprecision(0) << pct << "%"
+      << "  ('real' time: " << (int)realSec << "s, ratio: "
+      << std::setprecision(3) << ratio << "x)" << std::endl;
+    g_lastPrintReal = realSec;
+  }
+
+  // Re-schedule every 1 sim-second
+  Simulator::Schedule(Seconds(1.0), &PrintProgress);
+}
+
+// ================================================================
+//  Helper: add cyclic waypoints that repeat until simTime
+// ================================================================
+static void AddCyclicWaypoints(Ptr<WaypointMobilityModel> mob,
+                               const std::vector<Vector> &points,
+                               const std::vector<double> &offsets,
+                               double cycleDuration, double simTime)
+{
+  double lastAdded = -1.0;  // track last timestamp to avoid duplicates
+  double t_cycle = 0.0;
+  while (t_cycle < simTime) {
+    for (size_t i = 0; i < offsets.size(); ++i) {
+      double t = t_cycle + offsets[i];
+      if (t > simTime) return;
+      if (t > lastAdded) {   // strictly increasing timestamps only
+        mob->AddWaypoint(Waypoint(Seconds(t), points[i]));
+        lastAdded = t;
+      }
+    }
+    t_cycle += cycleDuration;
+  }
+}
 
 static void PingRttCallback(Time rtt) {
   gS.lastPingMs = rtt.GetMilliSeconds();
@@ -357,129 +429,158 @@ static void ScheduleNextMcsEvent(Ptr<Node> gnb, bool nextIsLow)
 
 // ---------------- NEW RANDOM EVENTS ----------------
 
-static void RandomBlockageEvent(NodeContainer ues, Ptr<Node> gnb)
+static void ScheduleNextRandomEvent(NodeContainer ues, NodeContainer remoteHosts, Ptr<Node> gnb);
+
+static void RestoreRandomEvent(NodeContainer ues, NodeContainer remoteHosts, Ptr<Node> gnb)
 {
-    // Randomly select a UE
-    uint32_t ueIdx = rand() % ues.GetN();
-    Ptr<Node> ue = ues.Get(ueIdx);
-    
-    // Simulate blockage by increasing Noise Figure of the UE receiver
-    // This effectively lowers the SINR
-    // Simulate blockage by increasing Noise Figure of the UE receiver
-    // This effectively lowers the SINR
-    Ptr<mmwave::MmWaveUeNetDevice> ueDev = nullptr;
-    for (uint32_t i = 0; i < ue->GetNDevices(); ++i) {
-        ueDev = ue->GetDevice(i)->GetObject<mmwave::MmWaveUeNetDevice>();
-        if (ueDev) break;
+    if (g_eventState.activeEvent == EVENT_BLOCKAGE && g_eventState.affectedPhy) {
+        g_eventState.affectedPhy->SetNoiseFigure(g_eventState.originalValue);
+        g_activeBlockage = false;
+        
+        uint64_t imsi = g_blockageImsi;
+        
+        // --- NEW: Clean stdout one-liner ---
+        std::cout << Simulator::Now().GetSeconds() << "s: [STDOUT] Blockage degradation ended on UE " << imsi << std::endl;
+        
+        std::cerr << "\n"
+                  << "╔════════════════════════════════════════════════════════════╗\n"
+                  << "║  [EVENT] RANDOM BLOCKAGE ENDED                           ║\n"
+                  << "╠════════════════════════════════════════════════════════════╣\n"
+                  << "║  Time: " << std::fixed << std::setprecision(2) << std::setw(48) << Simulator::Now().GetSeconds() << "s ║\n"
+                  << "║  Affected UE: " << std::setw(42) << imsi << " ║\n"
+                  << "║  Noise Figure restored to: " << std::setprecision(1) << std::setw(30) << g_eventState.originalValue << " dB ║\n"
+                  << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
+        NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] Random Blockage ended for UE " << imsi << " (NF restored to " << g_eventState.originalValue << "dB)");
+        
+        g_eventState.affectedPhy = nullptr;
+        g_eventState.activeEvent = EVENT_NONE;
+        
+    } else if (g_eventState.activeEvent == EVENT_TRAFFIC_SPIKE && g_eventState.affectedApp) {
+        g_eventState.affectedApp->SetAttribute("DataRate", DataRateValue(g_eventState.originalRate));
+        g_activeTrafficSpike = false;
+        
+        // --- NEW: Clean stdout one-liner ---
+        std::cout << Simulator::Now().GetSeconds() << "s: [STDOUT] Traffic spike degradation ended on RH " << g_eventState.affectedIdx << std::endl;
+        
+        std::cerr << "\n"
+                  << "╔════════════════════════════════════════════════════════════╗\n"
+                  << "║  [EVENT] TRAFFIC SPIKE ENDED                              ║\n"
+                  << "╠════════════════════════════════════════════════════════════╣\n"
+                  << "║  Time: " << std::fixed << std::setprecision(2) << std::setw(48) << Simulator::Now().GetSeconds() << "s ║\n"
+                  << "║  Remote Host Index: " << std::setw(38) << g_eventState.affectedIdx << " ║\n"
+                  << "║  Data Rate restored to: " << std::setw(35) << "50 Mbps ║\n"
+                  << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
+        NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] Traffic Spike ended for RH " << g_eventState.affectedIdx << " (restored to 50Mbps)");
+        
+        g_eventState.affectedApp = nullptr;
+        g_eventState.activeEvent = EVENT_NONE;
     }
 
-    if (ueDev) {
-        Ptr<mmwave::MmWaveUePhy> phy = ueDev->GetPhy();
-        if (phy) {
-            double originalNf = phy->GetNoiseFigure();
-            double blockageNf = originalNf + 60.0; // +60dB noise figure = severe blockage
-            
-            phy->SetNoiseFigure(blockageNf);
-            uint64_t imsi = ueDev->GetImsi();
-            g_activeBlockage = true;
-            g_blockageImsi = imsi;
-            std::cerr << "\n"
-                      << "╔════════════════════════════════════════════════════════════╗\n"
-                      << "║  [EVENT] RANDOM BLOCKAGE TRIGGERED                       ║\n"
-                      << "╠════════════════════════════════════════════════════════════╣\n"
-                      << "║  Time: " << std::fixed << std::setprecision(2) << std::setw(48) << Simulator::Now().GetSeconds() << "s ║\n"
-                      << "║  Affected UE: " << std::setw(42) << imsi << " ║\n"
-                      << "║  UE Index: " << std::setw(45) << ueIdx << " ║\n"
-                      << "║  Original Noise Figure: " << std::setprecision(1) << std::setw(33) << originalNf << " dB ║\n"
-                      << "║  Blockage Noise Figure: " << std::setw(33) << blockageNf << " dB ║\n"
-                      << "║  Impact: +30dB noise = severe signal degradation         ║\n"
-                      << "║  Duration: " << std::setprecision(0) << std::setw(45) << "5.0s ║\n"
-                      << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
-            NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] Random Blockage triggered for UE " << imsi << " (NF increased by 30dB from " << originalNf << "dB to " << blockageNf << "dB)");
-            
-            // Restore after 5 seconds
-            Simulator::Schedule(Seconds(5.0), [phy, originalNf, ueDev, imsi, ueIdx]() {
-                phy->SetNoiseFigure(originalNf);
-                g_activeBlockage = false;
+    // Schedule the NEXT event after a cooldown of 5 to 15 seconds
+    double cooldown = 5.0 + (rand() % 11); // 5 to 15 seconds
+    Simulator::Schedule(Seconds(cooldown), &ScheduleNextRandomEvent, ues, remoteHosts, gnb);
+}
+
+static void TriggerRandomEvent(RandomEventType type, NodeContainer ues, NodeContainer remoteHosts, Ptr<Node> gnb)
+{
+    double duration = 10.0; // Strictly 10 seconds
+
+    if (type == EVENT_BLOCKAGE) {
+        uint32_t ueIdx = rand() % ues.GetN();
+        Ptr<Node> ue = ues.Get(ueIdx);
+        Ptr<mmwave::MmWaveUeNetDevice> ueDev = nullptr;
+        
+        for (uint32_t i = 0; i < ue->GetNDevices(); ++i) {
+            ueDev = ue->GetDevice(i)->GetObject<mmwave::MmWaveUeNetDevice>();
+            if (ueDev) break;
+        }
+
+        if (ueDev) {
+            Ptr<mmwave::MmWaveUePhy> phy = ueDev->GetPhy();
+            if (phy) {
+                g_eventState.activeEvent = EVENT_BLOCKAGE;
+                g_eventState.affectedPhy = phy;
+                g_eventState.originalValue = phy->GetNoiseFigure();
+                g_eventState.affectedIdx = ueIdx;
+                
+                double blockageNf = g_eventState.originalValue + 60.0; // +60dB noise figure
+                phy->SetNoiseFigure(blockageNf);
+                
+                uint64_t imsi = ueDev->GetImsi();
+                g_activeBlockage = true;
+                g_blockageImsi = imsi;
+                
+                // --- NEW: Clean stdout one-liner ---
+                std::cout << Simulator::Now().GetSeconds() << "s: [STDOUT] Blockage degradation occurred on UE " << imsi << std::endl;
+                
                 std::cerr << "\n"
                           << "╔════════════════════════════════════════════════════════════╗\n"
-                          << "║  [EVENT] RANDOM BLOCKAGE ENDED                           ║\n"
+                          << "║  [EVENT] RANDOM BLOCKAGE TRIGGERED                       ║\n"
                           << "╠════════════════════════════════════════════════════════════╣\n"
                           << "║  Time: " << std::fixed << std::setprecision(2) << std::setw(48) << Simulator::Now().GetSeconds() << "s ║\n"
                           << "║  Affected UE: " << std::setw(42) << imsi << " ║\n"
-                          << "║  UE Index: " << std::setw(45) << ueIdx << " ║\n"
-                          << "║  Noise Figure restored to: " << std::setprecision(1) << std::setw(30) << originalNf << " dB ║\n"
+                          << "║  Original Noise Figure: " << std::setprecision(1) << std::setw(33) << g_eventState.originalValue << " dB ║\n"
+                          << "║  Blockage Noise Figure: " << std::setw(33) << blockageNf << " dB ║\n"
+                          << "║  Duration: " << std::setprecision(0) << std::setw(45) << duration << "s ║\n"
                           << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
-                NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] Random Blockage ended for UE " << imsi << " (NF restored to " << originalNf << "dB)");
-            });
+                NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] Blockage on UE " << imsi << " (NF " << blockageNf << "dB)");
+            }
         }
-    }
-    
-    // Schedule next blockage event (random time between 15-30s) + 5s duration + 3s cooldown
-    double nextTime = 5.0 + 3.0 + 15.0 + (rand() % 15);
-    Simulator::Schedule(Seconds(nextTime), &RandomBlockageEvent, ues, gnb);
-}
-
-static void TrafficSpikeEvent(NodeContainer remoteHosts)
-{
-    // Randomly select a Remote Host (which generates traffic for a UE)
-    uint32_t rhIdx = rand() % remoteHosts.GetN();
-    Ptr<Node> rh = remoteHosts.Get(rhIdx);
-    
-    // Find ALL OnOffApplications
-    std::vector<Ptr<OnOffApplication>> onOffApps;
-    for (uint32_t i = 0; i < rh->GetNApplications(); ++i) {
-        auto app = DynamicCast<OnOffApplication>(rh->GetApplication(i));
-        if (app) onOffApps.push_back(app);
-    }
-    
-    Ptr<OnOffApplication> onOffApp = nullptr;
-    if (!onOffApps.empty()) {
-        // Pick random app
-        onOffApp = onOffApps[rand() % onOffApps.size()];
-    }
-    
-    if (onOffApp) {
-        // Increase data rate significantly
-        DataRate originalRate("50Mbps"); // Assuming default
-        DataRate spikeRate("500Mbps");   // 10x spike
+    } 
+    else if (type == EVENT_TRAFFIC_SPIKE) {
+        uint32_t rhIdx = rand() % remoteHosts.GetN();
+        Ptr<Node> rh = remoteHosts.Get(rhIdx);
         
-        onOffApp->SetAttribute("DataRate", DataRateValue(spikeRate));
-        g_activeTrafficSpike = true;
-        g_trafficSpikeRhIdx = rhIdx;
-        std::cerr << "\n"
-                  << "╔════════════════════════════════════════════════════════════╗\n"
-                  << "║  [EVENT] TRAFFIC SPIKE TRIGGERED                          ║\n"
-                  << "╠════════════════════════════════════════════════════════════╣\n"
-                  << "║  Time: " << std::fixed << std::setprecision(2) << std::setw(48) << Simulator::Now().GetSeconds() << "s ║\n"
-                  << "║  Remote Host Index: " << std::setw(38) << rhIdx << " ║\n"
-                  << "║  Original Data Rate: " << std::setw(38) << "50 Mbps ║\n"
-                  << "║  Spike Data Rate: " << std::setw(40) << "500 Mbps ║\n"
-                  << "║  Increase: " << std::setw(47) << "10x (1000%) ║\n"
-                  << "║  Impact: Network congestion, higher latency              ║\n"
-                  << "║  Duration: " << std::setw(45) << "5.0s ║\n"
-                  << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
-        NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] Traffic Spike triggered for RH " << rhIdx << " (50Mbps -> 500Mbps, 10x increase)");
+        std::vector<Ptr<OnOffApplication>> onOffApps;
+        for (uint32_t i = 0; i < rh->GetNApplications(); ++i) {
+            auto app = DynamicCast<OnOffApplication>(rh->GetApplication(i));
+            if (app) onOffApps.push_back(app);
+        }
         
-        // Restore after 5 seconds
-        Simulator::Schedule(Seconds(5.0), [onOffApp, originalRate, rhIdx]() {
-            onOffApp->SetAttribute("DataRate", DataRateValue(originalRate));
-            g_activeTrafficSpike = false;
+        if (!onOffApps.empty()) {
+            Ptr<OnOffApplication> onOffApp = onOffApps[rand() % onOffApps.size()];
+            g_eventState.activeEvent = EVENT_TRAFFIC_SPIKE;
+            g_eventState.affectedApp = onOffApp;
+            g_eventState.affectedIdx = rhIdx;
+            g_eventState.originalRate = DataRate("50Mbps");
+            
+            DataRate spikeRate("500Mbps");
+            onOffApp->SetAttribute("DataRate", DataRateValue(spikeRate));
+            
+            g_activeTrafficSpike = true;
+            g_trafficSpikeRhIdx = rhIdx;
+            
+            // --- NEW: Clean stdout one-liner ---
+            std::cout << Simulator::Now().GetSeconds() << "s: [STDOUT] Traffic spike degradation occurred on RH " << rhIdx << std::endl;
+            
             std::cerr << "\n"
                       << "╔════════════════════════════════════════════════════════════╗\n"
-                      << "║  [EVENT] TRAFFIC SPIKE ENDED                              ║\n"
+                      << "║  [EVENT] TRAFFIC SPIKE TRIGGERED                          ║\n"
                       << "╠════════════════════════════════════════════════════════════╣\n"
                       << "║  Time: " << std::fixed << std::setprecision(2) << std::setw(48) << Simulator::Now().GetSeconds() << "s ║\n"
                       << "║  Remote Host Index: " << std::setw(38) << rhIdx << " ║\n"
-                      << "║  Data Rate restored to: " << std::setw(35) << "50 Mbps ║\n"
+                      << "║  Original Data Rate: " << std::setw(38) << "50 Mbps ║\n"
+                      << "║  Spike Data Rate: " << std::setw(40) << "500 Mbps ║\n"
+                      << "║  Duration: " << std::setprecision(0) << std::setw(45) << duration << "s ║\n"
                       << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
-            NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] Traffic Spike ended for RH " << rhIdx << " (restored to 50Mbps)");
-        });
+            NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] Traffic Spike on RH " << rhIdx << " (500Mbps)");
+        }
     }
+
+    // Schedule the restoration exactly 10 seconds later
+    Simulator::Schedule(Seconds(duration), &RestoreRandomEvent, ues, remoteHosts, gnb);
+}
+
+static void ScheduleNextRandomEvent(NodeContainer ues, NodeContainer remoteHosts, Ptr<Node> gnb)
+{
+    // Stop scheduling if we are near the end of the simulation
+    if (Simulator::Now().GetSeconds() >= (sim_duration - 15.0)) return;
+
+    // 50/50 chance for Blockage vs Traffic Spike
+    RandomEventType nextType = (rand() % 2 == 0) ? EVENT_BLOCKAGE : EVENT_TRAFFIC_SPIKE;
     
-    // Schedule next spike event (random time between 20-40s) + 5s duration + 3s cooldown
-    double nextTime = 5.0 + 3.0 + 20.0 + (rand() % 20);
-    Simulator::Schedule(Seconds(nextTime), &TrafficSpikeEvent, remoteHosts);
+    // Trigger immediately (the cooldown was already handled by RestoreRandomEvent)
+    TriggerRandomEvent(nextType, ues, remoteHosts, gnb);
 }
 
 
@@ -585,7 +686,7 @@ int main (int argc, char** argv)
   Ptr<Node> pgw = epc->GetPgwNode();
 
   NodeContainer gnb; gnb.Create(1);
-  NodeContainer ue;  ue.Create(2);
+  NodeContainer ue;  ue.Create(6); // Changed to 6 UEs
   NodeContainer rh;  rh.Create(1);
 
   InternetStackHelper ip; ip.Install(ue); ip.Install(rh);
@@ -601,62 +702,91 @@ int main (int argc, char** argv)
     m.Install(gnb);
   }
 
-  // UE Mobility (Same as ourv2.cc)
+  // ----------------------------------------------------------------
+  //  Wall: X=[50,55], Y=[0,50], Z=[0,10]
+  // ----------------------------------------------------------------
+  Ptr<Building> wall = CreateObject<Building>();
+  wall->SetBoundaries(Box(50.0, 55.0, 0.0, 50.0, 0.0, 10.0));
+  wall->SetBuildingType(Building::Commercial);
+  wall->SetExtWallsType(Building::ConcreteWithWindows);
+  wall->SetNRoomsX(1);
+  wall->SetNRoomsY(1);
+  wall->SetNFloors(1);
+
+  // UE Mobility 
   MobilityHelper uem;
   uem.SetMobilityModel("ns3::WaypointMobilityModel");
   uem.Install(ue);
-  Ptr<WaypointMobilityModel> ueMobility = ue.Get(0)->GetObject<WaypointMobilityModel>();
-  
-  double t_cycle = 0.0;
-  double cycle_duration = 50.0;
 
-  Vector p_start(30, 25, 1.5);    // Close to gNB (LOS)
-  Vector p_wall_front(70, 25, 1.5); // Just before building
-  Vector p_wall_back(95, 25, 1.5);  // Behind building (NLOS/Penetration)
-  Vector p_far_corner(95, 110, 1.5); // Far corner (Shadowed)
-  Vector p_clear(50, 110, 1.5);      // Clear of building (LOS)
-
-  // 0s: Start (Initial position)
-  ueMobility->AddWaypoint(Waypoint(Seconds(0.0), p_start));
-
-  while (t_cycle < simTime) {
-      // Note: The start point for the current cycle is already added 
-      // (either by initialization or by the end of the previous cycle).
-      
-      // 10s: Approach wall
-      if (t_cycle + 10.0 > simTime) break;
-      ueMobility->AddWaypoint(Waypoint(Seconds(t_cycle + 10.0), p_wall_front));
-
-      // 20s: Go through/behind wall -> Drop in throughput
-      if (t_cycle + 20.0 > simTime) break;
-      ueMobility->AddWaypoint(Waypoint(Seconds(t_cycle + 20.0), p_wall_back));
-
-      // 30s: Move along back -> Low throughput
-      if (t_cycle + 30.0 > simTime) break;
-      ueMobility->AddWaypoint(Waypoint(Seconds(t_cycle + 30.0), p_far_corner));
-
-      // 40s: Move clear -> Recovery
-      if (t_cycle + 40.0 > simTime) break;
-      ueMobility->AddWaypoint(Waypoint(Seconds(t_cycle + 40.0), p_clear));
-
-      // 50s: Return to start (closes the loop and sets start for next cycle)
-      if (t_cycle + 50.0 <= simTime) {
-            ueMobility->AddWaypoint(Waypoint(Seconds(t_cycle + 50.0), p_start));
-      }
-      
-      t_cycle += cycle_duration;
+  // -- UE0: Cyclic around wall, 55s cycle --
+  {
+    Ptr<WaypointMobilityModel> mob = ue.Get(0)->GetObject<WaypointMobilityModel>();
+    std::vector<Vector> pts = {
+      Vector(30, 25, 1.5),
+      Vector(45, 55, 1.5),
+      Vector(65, 55, 1.5),
+      Vector(70, 25, 1.5),
+      Vector(95, 90, 1.5),
+      Vector(48, 55, 1.5),
+      Vector(30, 25, 1.5),
+    };
+    std::vector<double> offsets = {0, 8, 14, 24, 34, 44, 55};
+    AddCyclicWaypoints(mob, pts, offsets, 55.0, simTime);
   }
 
+  // -- UE1: Fast linear shuttle at Y=55, X=20..140, 30s round trip --
+  {
+    Ptr<WaypointMobilityModel> mob = ue.Get(1)->GetObject<WaypointMobilityModel>();
+    double t = 0.0;
+    bool outward = false;
+    while (t < simTime) {
+      double x = outward ? 140.0 : 20.0;
+      mob->AddWaypoint(Waypoint(Seconds(t), Vector(x, 55.0, 1.5)));
+      t += 15.0;
+      outward = !outward;
+    }
+  }
 
-  // UE 1 Mobility
-  uem.Install(ue.Get(1));
-  Ptr<WaypointMobilityModel> ue1Mobility = ue.Get(1)->GetObject<WaypointMobilityModel>();
-  ue1Mobility->AddWaypoint(Waypoint(Seconds(0.0), Vector(25, 35, 1.5)));
-  ue1Mobility->AddWaypoint(Waypoint(Seconds(10.0), Vector(105, 35, 1.5)));
-  ue1Mobility->AddWaypoint(Waypoint(Seconds(20.0), Vector(185, 35, 1.5)));
-  ue1Mobility->AddWaypoint(Waypoint(Seconds(30.0), Vector(265, 35, 1.5)));
-  ue1Mobility->AddWaypoint(Waypoint(Seconds(40.0), Vector(345, 35, 1.5)));
-  ue1Mobility->AddWaypoint(Waypoint(Seconds(50.0), Vector(425, 35, 1.5)));
+  // -- UE2: Stationary near gNB (good signal baseline) --
+  {
+    Ptr<WaypointMobilityModel> mob = ue.Get(2)->GetObject<WaypointMobilityModel>();
+    mob->AddWaypoint(Waypoint(Seconds(0.0), Vector(28, 30, 1.5)));
+  }
+
+  // -- UE3: Stationary at cell edge, east side (poor signal) --
+  {
+    Ptr<WaypointMobilityModel> mob = ue.Get(3)->GetObject<WaypointMobilityModel>();
+    mob->AddWaypoint(Waypoint(Seconds(0.0), Vector(85, 55, 1.5)));
+  }
+
+  // -- UE4: Slow walk on west side only, 40s cycle --
+  {
+    Ptr<WaypointMobilityModel> mob = ue.Get(4)->GetObject<WaypointMobilityModel>();
+    std::vector<Vector> pts = {
+      Vector(15, 10, 1.5),
+      Vector(15, 45, 1.5),
+      Vector(45, 45, 1.5),
+      Vector(45, 10, 1.5),
+      Vector(15, 10, 1.5), 
+    };
+    std::vector<double> offsets = {0, 10, 20, 30, 40};
+    AddCyclicWaypoints(mob, pts, offsets, 40.0, simTime);
+  }
+
+  // -- UE5: Wide arc from near gNB to far east via wall top, 50s cycle --
+  {
+    Ptr<WaypointMobilityModel> mob = ue.Get(5)->GetObject<WaypointMobilityModel>();
+    std::vector<Vector> pts = {
+      Vector(35, 30, 1.5),
+      Vector(35, 55, 1.5),
+      Vector(75, 55, 1.5),
+      Vector(75, 80, 1.5),
+      Vector(35, 55, 1.5),
+      Vector(35, 30, 1.5),
+    };
+    std::vector<double> offsets = {0, 8, 18, 28, 38, 50};
+    AddCyclicWaypoints(mob, pts, offsets, 50.0, simTime);
+  }
 
   // Core + RH
   {
@@ -701,17 +831,17 @@ int main (int argc, char** argv)
   ApplicationContainer sinkApps = sink.Install(ue); // Install on all UEs
   sinkApps.Start(Seconds(0.2));
   
-  // Traffic for UE 0
   OnOffHelper cbr("ns3::UdpSocketFactory", InetSocketAddress(ueIf.GetAddress(0), cbrPort));
   cbr.SetAttribute("OnTime",  StringValue("ns3::ConstantRandomVariable[Constant=1]"));
   cbr.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0]"));
   cbr.SetAttribute("DataRate", StringValue("50Mbps"));
   cbr.SetAttribute("PacketSize", UintegerValue(1200));
-  cbr.Install(rh.Get(0)).Start(Seconds(0.35));
 
-  // Traffic for UE 1
-  cbr.SetAttribute("Remote", AddressValue(InetSocketAddress(ueIf.GetAddress(1), cbrPort)));
-  cbr.Install(rh.Get(0)).Start(Seconds(0.35));
+  // Install traffic for all UEs
+  for (uint32_t i = 0; i < ue.GetN(); ++i) {
+      cbr.SetAttribute("Remote", AddressValue(InetSocketAddress(ueIf.GetAddress(i), cbrPort)));
+      cbr.Install(rh.Get(0)).Start(Seconds(0.35));
+  }
 
   // Install Ping Application
   V4PingHelper ping(ueIf.GetAddress(0));
@@ -731,6 +861,9 @@ int main (int argc, char** argv)
                       std::ref(ue), std::ref(ueDevs), gnb.Get(0),
                       covRadius, sinkApps, 0.1);
 
+  // Start progress printer
+  Simulator::Schedule(Seconds(0.0), &PrintProgress);
+
   // NetAnim
   AnimationInterface anim("NetAnimFile_v3.xml");
   g_anim = &anim;
@@ -740,9 +873,8 @@ int main (int argc, char** argv)
   // Schedule MCS Events (Existing)
   //Simulator::Schedule(Seconds(5.0), &ScheduleNextMcsEvent, gnb.Get(0), true);
 
-  // Schedule NEW Random Events
-  // Simulator::Schedule(Seconds(12.0), &RandomBlockageEvent, ue, gnb.Get(0));
-  // Simulator::Schedule(Seconds(18.0), &TrafficSpikeEvent, rh);
+  // start the random event scheduler
+  Simulator::Schedule(Seconds(12.0), &ScheduleNextRandomEvent, ue, rh, gnb.Get(0));
 
   Simulator::Stop(Seconds(simTime));
   Simulator::Run();
