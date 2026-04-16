@@ -40,7 +40,7 @@ cd simulator-bridge
 ```bash
 cd oran-e2sim/e2sim
 mkdir -p build
-./build_e2sim.sh 3
+./build_e2sim.sh 1
 sudo ldconfig
 cd ../../
 ```
