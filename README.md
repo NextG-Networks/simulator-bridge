@@ -82,9 +82,12 @@ From the root of the `simulator-bridge` repository, run:
 ---
 
 ## Deploy AI Dashboard
-
 ```bash
 cd ai-dashboard
+python3 -m venv venv
+```
+
+```bash
 ./deploy_dashboard.sh
 ```
 
