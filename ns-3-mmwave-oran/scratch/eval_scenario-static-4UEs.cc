@@ -34,10 +34,10 @@ using namespace ns3;
 using namespace mmwave;
 namespace fs = std::filesystem;
 
-NS_LOG_COMPONENT_DEFINE("MVS_Mmwave_1gNB_1UE_v3");
+NS_LOG_COMPONENT_DEFINE("MVS_Mmwave_1gNB_4UE");
 
 //simulation
-static const double sim_duration = 180.0;
+static const double sim_duration = 150.0;
 
 // ---------------- Runtime flags ----------------
 static GlobalValue g_simTime("simTime", "Simulation time (s)",
@@ -73,7 +73,7 @@ static GlobalValue g_randomEvents("randomEvents", "Enable the auto-scheduled ran
 static GlobalValue g_mcsEvents("mcsEvents", "Enable the auto-scheduled MCS degradation event stream",
     BooleanValue(false), MakeBooleanChecker());
 static GlobalValue g_eventDuration("eventDuration", "Per-event duration in seconds",
-    DoubleValue(20.0), MakeDoubleChecker<double>(1.0, 600.0));
+    DoubleValue(25.0), MakeDoubleChecker<double>(1.0, 600.0));
 static GlobalValue g_injectAt("injectAt", "Inject a single event at this time (s), 0=disabled",
     DoubleValue(0.0), MakeDoubleChecker<double>(0.0, 3600.0));
 static GlobalValue g_injectType("injectType", "Event type: blockage|spike|none",
@@ -483,7 +483,7 @@ static void RestoreRandomEvent(NodeContainer ues, NodeContainer remoteHosts, Ptr
                   << "╠════════════════════════════════════════════════════════════╣\n"
                   << "║  Time: " << std::fixed << std::setprecision(2) << std::setw(48) << Simulator::Now().GetSeconds() << "s ║\n"
                   << "║  Remote Host Index: " << std::setw(38) << g_eventState.affectedIdx << " ║\n"
-                  << "║  Data Rate restored to: " << std::setw(35) << "50 Mbps ║\n"
+                  << "║  Data Rate restored to: " << std::setw(35) << "5 Mbps ║\n"
                   << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
         NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] Traffic Spike ended for RH " << g_eventState.affectedIdx << " (restored to 5Mbps)");
         
@@ -491,12 +491,8 @@ static void RestoreRandomEvent(NodeContainer ues, NodeContainer remoteHosts, Ptr
         g_eventState.activeEvent = EVENT_NONE;
     }
 
-    // Schedule the NEXT event after a cooldown of 20 to 30 seconds.
-    // Longer than the event duration itself so the AI's actuation window
-    // (anomaly → LLM → OTM → ASSURANCE → WITHDRAWAL) can close before the
-    // next stressor arrives, and so the self-restore timer can be separated
-    // from the AI's contribution in the evaluation.
-    double cooldown = 20.0 + (rand() % 11); // 20 to 30 seconds
+    // Schedule the next event after a cooldown of 10s
+    double cooldown = 10;
     Simulator::Schedule(Seconds(cooldown), &ScheduleNextRandomEvent, ues, remoteHosts, gnb);
 }
 
@@ -565,9 +561,9 @@ static void TriggerRandomEvent(RandomEventType type, NodeContainer ues, NodeCont
             g_eventState.activeEvent = EVENT_TRAFFIC_SPIKE;
             g_eventState.affectedApp = onOffApp;
             g_eventState.affectedIdx = rhIdx;
-            g_eventState.originalRate = DataRate("50Mbps");
+            g_eventState.originalRate = DataRate("5Mbps");
             
-            DataRate spikeRate("500Mbps");
+            DataRate spikeRate("1000Mbps");
             onOffApp->SetAttribute("DataRate", DataRateValue(spikeRate));
             
             g_activeTrafficSpike = true;
@@ -585,11 +581,11 @@ static void TriggerRandomEvent(RandomEventType type, NodeContainer ues, NodeCont
                       << "╠════════════════════════════════════════════════════════════╣\n"
                       << "║  Time: " << std::fixed << std::setprecision(2) << std::setw(48) << Simulator::Now().GetSeconds() << "s ║\n"
                       << "║  Remote Host Index: " << std::setw(38) << rhIdx << " ║\n"
-                      << "║  Original Data Rate: " << std::setw(38) << "50 Mbps ║\n"
-                      << "║  Spike Data Rate: " << std::setw(40) << "500 Mbps ║\n"
+                      << "║  Original Data Rate: " << std::setw(38) << "5 Mbps ║\n"
+                      << "║  Spike Data Rate: " << std::setw(40) << "1000 Mbps ║\n"
                       << "║  Duration: " << std::setprecision(0) << std::setw(45) << duration << "s ║\n"
                       << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
-            NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] Traffic Spike on RH " << rhIdx << " (50Mbps)");
+            NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] Traffic Spike on RH " << rhIdx << " (5Mbps)");
         }
     }
 
@@ -597,14 +593,19 @@ static void TriggerRandomEvent(RandomEventType type, NodeContainer ues, NodeCont
     Simulator::Schedule(Seconds(duration), &RestoreRandomEvent, ues, remoteHosts, gnb);
 }
 
+// Name is misleading TODO: rename and refactor
 static void ScheduleNextRandomEvent(NodeContainer ues, NodeContainer remoteHosts, Ptr<Node> gnb)
 {
     // Stop scheduling if we are near the end of the simulation
     if (Simulator::Now().GetSeconds() >= (sim_duration - 15.0)) return;
 
-    // 50/50 chance for Blockage vs Traffic Spike
-    RandomEventType nextType = (rand() % 2 == 0) ? EVENT_BLOCKAGE : EVENT_TRAFFIC_SPIKE;
-    
+    // Deterministic alternating sequence: blockage, spike, blockage, spike, ...
+    // The deterministic event at injectAt is a traffic spike, so the first
+    // stochastic event is a blockage.
+    static int eventCount = 0;
+    RandomEventType nextType = (eventCount % 2 == 0) ? EVENT_BLOCKAGE : EVENT_TRAFFIC_SPIKE;
+    eventCount++;
+
     // Trigger immediately (the cooldown was already handled by RestoreRandomEvent)
     TriggerRandomEvent(nextType, ues, remoteHosts, gnb);
 }
@@ -698,8 +699,8 @@ int main (int argc, char** argv)
 
   // RF/system defaults
   Config::SetDefault("ns3::MmWavePhyMacCommon::CenterFreq", DoubleValue(28e9));
-  Config::SetDefault("ns3::MmWavePhyMacCommon::Bandwidth", DoubleValue(75e6));
-  Config::SetDefault("ns3::MmWaveEnbPhy::TxPower", DoubleValue(15.0));
+  Config::SetDefault("ns3::MmWavePhyMacCommon::Bandwidth",  DoubleValue(100e6));
+  Config::SetDefault("ns3::MmWaveEnbPhy::TxPower",          DoubleValue(30.0));
   Config::SetDefault("ns3::MmWaveUePhy::NoiseFigure",       DoubleValue(7.0));
 
   fs::create_directories(outDir);
@@ -714,14 +715,14 @@ int main (int argc, char** argv)
 
   Ptr<Node> pgw = epc->GetPgwNode();
 
-  NodeContainer gnb; gnb.Create(1);
-  NodeContainer ue;  ue.Create(6); // Changed to 6 UEs
+ NodeContainer gnb; gnb.Create(1);
+  NodeContainer ue;  ue.Create(4);
   NodeContainer rh;  rh.Create(1);
 
   InternetStackHelper ip; ip.Install(ue); ip.Install(rh);
 
-  // Mobility
-  const Vector gnbPos = Vector(25,25,10);
+  // gNB Mobility
+  const Vector gnbPos = Vector(25, 25, 10);
   {
     MobilityHelper m;
     auto enbPos = CreateObject<ListPositionAllocator>();
@@ -731,90 +732,28 @@ int main (int argc, char** argv)
     m.Install(gnb);
   }
 
-  // ----------------------------------------------------------------
-  //  Wall: X=[50,55], Y=[0,50], Z=[0,10]
-  // ----------------------------------------------------------------
-  Ptr<Building> wall = CreateObject<Building>();
-  wall->SetBoundaries(Box(50.0, 55.0, 0.0, 50.0, 0.0, 10.0));
-  wall->SetBuildingType(Building::Commercial);
-  wall->SetExtWallsType(Building::ConcreteWithWindows);
-  wall->SetNRoomsX(1);
-  wall->SetNRoomsY(1);
-  wall->SetNFloors(1);
+  // UE Mobility (Static Positions)
+{
+    MobilityHelper uem;
+    auto uePos = CreateObject<ListPositionAllocator>();
+    
+    // gNB is at (25.0, 25.0, 10.0)
 
-  // UE Mobility 
-  MobilityHelper uem;
-  uem.SetMobilityModel("ns3::WaypointMobilityModel");
-  uem.Install(ue);
+    // UE0: Medium distance (~45 meters away). 
+    uePos->Add(Vector(70.0, 25.0, 1.5)); 
+    
+    // UE1: Cell edge (~85 meters away).
+    uePos->Add(Vector(25.0, 110.0, 1.5)); 
+    
+    // UE2: Almost if not out of coverage (>100 meters away).
+    uePos->Add(Vector(100.0, 100.0, 1.5)); 
 
-  // -- UE0: Cyclic around wall, 55s cycle --
-  {
-    Ptr<WaypointMobilityModel> mob = ue.Get(0)->GetObject<WaypointMobilityModel>();
-    std::vector<Vector> pts = {
-      Vector(30, 25, 1.5),
-      Vector(45, 55, 1.5),
-      Vector(65, 55, 1.5),
-      Vector(70, 25, 1.5),
-      Vector(95, 90, 1.5),
-      Vector(48, 55, 1.5),
-      Vector(30, 25, 1.5),
-    };
-    std::vector<double> offsets = {0, 8, 14, 24, 34, 44, 55};
-    AddCyclicWaypoints(mob, pts, offsets, 55.0, simTime);
-  }
+    // UE3: Medium/far away
+    uePos->Add(Vector(80.0, 60.0, 1.5)); 
 
-  // -- UE1: Fast linear shuttle at Y=55, X=20..140, 30s round trip --
-  {
-    Ptr<WaypointMobilityModel> mob = ue.Get(1)->GetObject<WaypointMobilityModel>();
-    double t = 0.0;
-    bool outward = false;
-    while (t < simTime) {
-      double x = outward ? 140.0 : 20.0;
-      mob->AddWaypoint(Waypoint(Seconds(t), Vector(x, 55.0, 1.5)));
-      t += 15.0;
-      outward = !outward;
-    }
-  }
-
-  // -- UE2: Stationary near gNB (good signal baseline) --
-  {
-    Ptr<WaypointMobilityModel> mob = ue.Get(2)->GetObject<WaypointMobilityModel>();
-    mob->AddWaypoint(Waypoint(Seconds(0.0), Vector(28, 30, 1.5)));
-  }
-
-  // -- UE3: Stationary at cell edge, east side (poor signal) --
-  {
-    Ptr<WaypointMobilityModel> mob = ue.Get(3)->GetObject<WaypointMobilityModel>();
-    mob->AddWaypoint(Waypoint(Seconds(0.0), Vector(85, 55, 1.5)));
-  }
-
-  // -- UE4: Slow walk on west side only, 40s cycle --
-  {
-    Ptr<WaypointMobilityModel> mob = ue.Get(4)->GetObject<WaypointMobilityModel>();
-    std::vector<Vector> pts = {
-      Vector(15, 10, 1.5),
-      Vector(15, 45, 1.5),
-      Vector(45, 45, 1.5),
-      Vector(45, 10, 1.5),
-      Vector(15, 10, 1.5), 
-    };
-    std::vector<double> offsets = {0, 10, 20, 30, 40};
-    AddCyclicWaypoints(mob, pts, offsets, 40.0, simTime);
-  }
-
-  // -- UE5: Wide arc from near gNB to far east via wall top, 50s cycle --
-  {
-    Ptr<WaypointMobilityModel> mob = ue.Get(5)->GetObject<WaypointMobilityModel>();
-    std::vector<Vector> pts = {
-      Vector(35, 30, 1.5),
-      Vector(35, 55, 1.5),
-      Vector(75, 55, 1.5),
-      Vector(75, 80, 1.5),
-      Vector(35, 55, 1.5),
-      Vector(35, 30, 1.5),
-    };
-    std::vector<double> offsets = {0, 8, 18, 28, 38, 50};
-    AddCyclicWaypoints(mob, pts, offsets, 50.0, simTime);
+    uem.SetPositionAllocator(uePos);
+    uem.SetMobilityModel("ns3::ConstantPositionMobilityModel");
+    uem.Install(ue);
   }
 
   // Core + RH
@@ -863,7 +802,7 @@ int main (int argc, char** argv)
   OnOffHelper cbr("ns3::UdpSocketFactory", InetSocketAddress(ueIf.GetAddress(0), cbrPort));
   cbr.SetAttribute("OnTime",  StringValue("ns3::ConstantRandomVariable[Constant=1]"));
   cbr.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0]"));
-  cbr.SetAttribute("DataRate", StringValue("50Mbps"));
+  cbr.SetAttribute("DataRate", StringValue("5Mbps"));
   cbr.SetAttribute("PacketSize", UintegerValue(1200));
 
   // Install traffic for all UEs

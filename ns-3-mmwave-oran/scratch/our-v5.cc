@@ -416,7 +416,7 @@ static void RandomBlockageEvent(NodeContainer ues, Ptr<Node> gnb)
     }
     
     // Schedule next blockage event (random time between 15-30s) + 5s duration + 3s cooldown
-    double nextTime = 5.0 + 3.0 + 15.0 + (rand() % 15);
+    double nextTime = 10;
     Simulator::Schedule(Seconds(nextTime), &RandomBlockageEvent, ues, gnb);
 }
 
@@ -441,8 +441,8 @@ static void TrafficSpikeEvent(NodeContainer remoteHosts)
     
     if (onOffApp) {
         // Increase data rate significantly
-        DataRate originalRate("50Mbps"); // Assuming default
-        DataRate spikeRate("500Mbps");   // 10x spike
+        DataRate originalRate("5Mbps"); // Assuming default
+        DataRate spikeRate("100Mbps");   // 10x spike
         
         onOffApp->SetAttribute("DataRate", DataRateValue(spikeRate));
         g_activeTrafficSpike = true;
@@ -478,7 +478,7 @@ static void TrafficSpikeEvent(NodeContainer remoteHosts)
     }
     
     // Schedule next spike event (random time between 20-40s) + 5s duration + 3s cooldown
-    double nextTime = 5.0 + 3.0 + 20.0 + (rand() % 20);
+    double nextTime = 10;
     Simulator::Schedule(Seconds(nextTime), &TrafficSpikeEvent, remoteHosts);
 }
 

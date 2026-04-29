@@ -25,6 +25,11 @@ SAMPLE_XAPP_DIR="${PROJECT_ROOT}/colosseum-near-rt-ric/setup/sample-xapp"
 NS3_DIR="${PROJECT_ROOT}/ns-3-mmwave-oran"
 NS3_DEFAULT_SCENARIO="ourv2.cc"   # Default ns-3 scratch scenario
 NS3_SCENARIO=""                   # Will be selected at runtime
+NS3_SEED=""                       # Optional seed for deterministic runs
+NS3_RANDOM_EVENTS=""              # true|false (forwards to --randomEvents)
+NS3_INJECT_AT=""                  # seconds, single controlled injection
+NS3_INJECT_TYPE=""                # blockage|interference|mobility|none
+NS3_SIM_TIME=""                   # override simulation duration (seconds)
 RELAY_SERVER_SCRIPT="${PROJECT_ROOT}/ai_relay_server.py"
 RELAY_LOG_FILE="${PROJECT_ROOT}/relay_server.log"
 XAPP_CONTAINER_NAME="sample-xapp-24"
@@ -67,6 +72,26 @@ while [[ $# -gt 0 ]]; do
             NS3_SCENARIO="$2"
             shift 2
             ;;
+        --rngSeed)
+            NS3_SEED="$2"
+            shift 2
+            ;;
+        --randomEvents)
+            NS3_RANDOM_EVENTS="$2"
+            shift 2
+            ;;
+        --injectAt)
+            NS3_INJECT_AT="$2"
+            shift 2
+            ;;
+        --injectType)
+            NS3_INJECT_TYPE="$2"
+            shift 2
+            ;;
+        --simTime)
+            NS3_SIM_TIME="$2"
+            shift 2
+            ;;
         --background)
             RUN_BACKGROUND=true
             shift
@@ -81,7 +106,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo -e "${RED}Unknown option: $1${NC}"
-            echo "Usage: $0 [--skip-import] [--skip-ric] [--skip-xapp] [--skip-ns3] [--skip-relay] [--scenario <file.cc>] [--ai-ip <ip>] [--background] [--non-interactive|-y]"
+            echo "Usage: $0 [--skip-import] [--skip-ric] [--skip-xapp] [--skip-ns3] [--skip-relay] [--scenario <file.cc>] [--rngSeed <int>] [--randomEvents <true|false>] [--injectAt <sec>] [--injectType <blockage|interference|mobility|none>] [--simTime <sec>] [--ai-ip <ip>] [--background] [--non-interactive|-y]"
             exit 1
             ;;
     esac
@@ -658,11 +683,36 @@ if [ "$SKIP_NS3" = false ]; then
         log_info "Using ns-3 scenario from arguments: scratch/${NS3_SCENARIO}"
     fi
 
-    log_info "Starting ns-3 simulation: scratch/${NS3_SCENARIO}"
+    # --- Forward eval flags to the scenario if present ---
+    TARGET_NAME="${NS3_SCENARIO%.cc}"
+    NS3_RUN_ARGS="${TARGET_NAME}"
+
+    if [ -n "$NS3_SEED" ]; then
+        NS3_RUN_ARGS="${NS3_RUN_ARGS} --rngSeed=${NS3_SEED}"
+        log_info "Applying rngSeed=${NS3_SEED}"
+    fi
+    if [ -n "$NS3_RANDOM_EVENTS" ]; then
+        NS3_RUN_ARGS="${NS3_RUN_ARGS} --randomEvents=${NS3_RANDOM_EVENTS}"
+        log_info "Applying randomEvents=${NS3_RANDOM_EVENTS}"
+    fi
+    if [ -n "$NS3_INJECT_AT" ]; then
+        NS3_RUN_ARGS="${NS3_RUN_ARGS} --injectAt=${NS3_INJECT_AT}"
+        log_info "Applying injectAt=${NS3_INJECT_AT}s"
+    fi
+    if [ -n "$NS3_INJECT_TYPE" ]; then
+        NS3_RUN_ARGS="${NS3_RUN_ARGS} --injectType=${NS3_INJECT_TYPE}"
+        log_info "Applying injectType=${NS3_INJECT_TYPE}"
+    fi
+    if [ -n "$NS3_SIM_TIME" ]; then
+        NS3_RUN_ARGS="${NS3_RUN_ARGS} --simTime=${NS3_SIM_TIME}"
+        log_info "Applying simTime=${NS3_SIM_TIME}s"
+    fi
+
+    log_info "Starting ns-3 simulation: $NS3_RUN_ARGS"
 
     if [ "$RUN_BACKGROUND" = true ]; then
         log_info "Running ns-3 simulation in background..."
-        nohup ./ns3 run "scratch/${NS3_SCENARIO}" > ns3_simulation.log 2>&1 &
+        nohup ./ns3 run "$NS3_RUN_ARGS" > ns3_simulation.log 2>&1 &
         NS3_PID=$!
         log_success "ns-3 simulation started in background (PID: $NS3_PID)"
         log_info "Logs are being written to: $NS3_DIR/ns3_simulation.log"
@@ -671,7 +721,7 @@ if [ "$SKIP_NS3" = false ]; then
     else
         log_info "Running ns-3 simulation in foreground..."
         log_info "Press Ctrl+C to stop the simulation"
-        run_step "Run ns-3 simulation" "./ns3 run scratch/${NS3_SCENARIO}"
+        run_step "Run ns-3 simulation" "./ns3 run \"$NS3_RUN_ARGS\""
     fi
 else
     log_warning "Skipping ns-3 simulation (--skip-ns3 flag set)"
@@ -718,4 +768,3 @@ fi
 if [ "$SKIP_NS3" = false ] && [ "$RUN_BACKGROUND" = true ]; then
     log_info "  View ns-3 logs: tail -f $NS3_DIR/ns3_simulation.log"
 fi
-
