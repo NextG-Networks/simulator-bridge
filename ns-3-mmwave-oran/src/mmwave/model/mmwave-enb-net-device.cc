@@ -1748,8 +1748,26 @@ MmWaveEnbNetDevice::ControlMessageReceivedCallback(E2AP_PDU_t* sub_req_pdu)
             SetBandwidth(bandwidth);
             uint8_t confirmedBw = GetBandwidth();
             NS_LOG_INFO("Set Bandwidth to " << (int)bandwidth << " for cell " << m_cellId);
-            fprintf(stderr, "  → Bandwidth change applied: %u RBs (confirmed %u) for cell %u\n", 
+            fprintf(stderr, "  → Bandwidth change applied: %u RBs (confirmed %u) for cell %u\n",
                     bandwidth, confirmedBw, m_cellId);
+            fflush(stderr);
+        }
+        else if (cmd.type == "chaos")
+        {
+            // Chaos events (blockage, traffic-spike) target UE PHYs and remote-host
+            // apps the ENB doesn't own. Bridge by writing the event keyword to a
+            // file the scenario polls (see PollChaosTrigger in scratch/dino_v1.cc).
+            const char* path = "/tmp/chaos_trigger.txt";
+            std::ofstream f(path, std::ios::trunc);
+            if (f.is_open()) {
+                f << cmd.strValue;
+                f.close();
+                fprintf(stderr, "  → CHAOS bridged: wrote '%s' to %s\n",
+                        cmd.strValue.c_str(), path);
+            } else {
+                fprintf(stderr, "  [Error] CHAOS: failed to open %s for event '%s'\n",
+                        path, cmd.strValue.c_str());
+            }
             fflush(stderr);
         }
     }

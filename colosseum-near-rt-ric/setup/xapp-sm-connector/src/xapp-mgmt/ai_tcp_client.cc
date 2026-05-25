@@ -424,7 +424,7 @@ void AiTcpClient::configListenerLoop() {
                                 }
                                 
                                 if (!meid.empty() && !cmd_json.empty()) {
-                                    mdclog_write(MDCLOG_INFO, "[AI-TCP] ✅ Extracted control command: meid='%s', cmd_json='%s' (len=%zu)", 
+                                    mdclog_write(MDCLOG_INFO, "[AI-TCP] ✅ Extracted control command: meid='%s', cmd_json='%s' (len=%zu)",
                                                 meid.c_str(), cmd_json.c_str(), cmd_json.size());
                                     mdclog_write(MDCLOG_INFO, "[AI-TCP] → Forwarding to send_ctrl_ callback...");
                                     control_cmd_handler_(meid, cmd_json);

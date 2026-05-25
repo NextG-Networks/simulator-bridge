@@ -286,74 +286,141 @@ static void TriggerBlockageEvent(NodeContainer ues, Ptr<Node> gnb)
 {
     uint32_t ueIdx = rand() % ues.GetN();
     Ptr<Node> ue = ues.Get(ueIdx);
-    
+
     Ptr<mmwave::MmWaveUeNetDevice> ueDev = nullptr;
     for (uint32_t i = 0; i < ue->GetNDevices(); ++i) {
         ueDev = ue->GetDevice(i)->GetObject<mmwave::MmWaveUeNetDevice>();
         if (ueDev) break;
     }
 
-    if (ueDev) {
-        Ptr<mmwave::MmWaveUePhy> phy = ueDev->GetPhy();
-        if (phy) {
-            double originalNf = phy->GetNoiseFigure();
-            double blockageNf = originalNf + 60.0; 
-            
-            phy->SetNoiseFigure(blockageNf);
-            uint64_t imsi = ueDev->GetImsi();
-            g_activeBlockage = true;
-            g_blockageImsi = imsi;
-
-            // Restore after 5 seconds
-            Simulator::Schedule(Seconds(5.0), [phy, originalNf, ueDev, imsi, ueIdx]() {
-                phy->SetNoiseFigure(originalNf);
-                g_activeBlockage = false;
-            });
-        }
+    if (!ueDev) {
+        std::cerr << "[CHAOS] BLOCKAGE: no MmWaveUeNetDevice found on UE idx " << ueIdx << std::endl;
+        return;
     }
+
+    Ptr<mmwave::MmWaveUePhy> phy = ueDev->GetPhy();
+    if (!phy) {
+        std::cerr << "[CHAOS] BLOCKAGE: no PHY on UE idx " << ueIdx << std::endl;
+        return;
+    }
+
+    double originalNf = phy->GetNoiseFigure();
+    double blockageNf = originalNf + 60.0;
+    const double duration = 5.0;
+
+    phy->SetNoiseFigure(blockageNf);
+    uint64_t imsi = ueDev->GetImsi();
+    g_activeBlockage = true;
+    g_blockageImsi = imsi;
+
+    std::cout << ">>> [EVENT-START @ " << Simulator::Now().GetSeconds()
+              << "s] BLOCKAGE on UE " << imsi
+              << " (duration=" << duration << "s)" << std::endl << std::flush;
+    std::cout << Simulator::Now().GetSeconds()
+              << "s: [STDOUT] Blockage degradation occurred on UE " << imsi << std::endl;
+
+    std::cerr << "\n"
+              << "╔════════════════════════════════════════════════════════════╗\n"
+              << "║  [EVENT] CHAOS BLOCKAGE TRIGGERED                          ║\n"
+              << "╠════════════════════════════════════════════════════════════╣\n"
+              << "║  Time: " << std::fixed << std::setprecision(2) << std::setw(48) << Simulator::Now().GetSeconds() << "s ║\n"
+              << "║  Affected UE: " << std::setw(42) << imsi << " ║\n"
+              << "║  Original Noise Figure: " << std::setprecision(1) << std::setw(33) << originalNf << " dB ║\n"
+              << "║  Blockage Noise Figure: " << std::setw(33) << blockageNf << " dB ║\n"
+              << "║  Duration: " << std::setprecision(0) << std::setw(45) << duration << "s ║\n"
+              << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
+    NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] Blockage on UE " << imsi << " (NF " << blockageNf << "dB)");
+
+    Simulator::Schedule(Seconds(duration), [phy, originalNf, imsi]() {
+        phy->SetNoiseFigure(originalNf);
+        g_activeBlockage = false;
+        std::cout << ">>> [EVENT-END @ " << Simulator::Now().GetSeconds()
+                  << "s] BLOCKAGE on UE " << imsi << " cleared" << std::endl << std::flush;
+        std::cout << Simulator::Now().GetSeconds()
+                  << "s: [STDOUT] Blockage degradation ended on UE " << imsi << std::endl;
+        std::cerr << "\n"
+                  << "╔════════════════════════════════════════════════════════════╗\n"
+                  << "║  [EVENT] CHAOS BLOCKAGE ENDED                              ║\n"
+                  << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
+        NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] Blockage ended for UE " << imsi << " (NF restored to " << originalNf << "dB)");
+    });
 }
 
 static void TriggerTrafficSpikeEvent(NodeContainer remoteHosts)
 {
     uint32_t rhIdx = rand() % remoteHosts.GetN();
     Ptr<Node> rh = remoteHosts.Get(rhIdx);
-    
+
     std::vector<Ptr<OnOffApplication>> onOffApps;
     for (uint32_t i = 0; i < rh->GetNApplications(); ++i) {
         auto app = DynamicCast<OnOffApplication>(rh->GetApplication(i));
         if (app) onOffApps.push_back(app);
     }
-    
-    Ptr<OnOffApplication> onOffApp = nullptr;
-    if (!onOffApps.empty()) {
-        onOffApp = onOffApps[rand() % onOffApps.size()];
-    }
-    
-    if (onOffApp) {
-        DataRate originalRate("50Mbps"); 
-        DataRate spikeRate("500Mbps");   
-        
-        onOffApp->SetAttribute("DataRate", DataRateValue(spikeRate));
-        g_activeTrafficSpike = true;
-        g_trafficSpikeRhIdx = rhIdx;
 
-        Simulator::Schedule(Seconds(5.0), [onOffApp, originalRate, rhIdx]() {
-            onOffApp->SetAttribute("DataRate", DataRateValue(originalRate));
-            g_activeTrafficSpike = false;
-        });
+    if (onOffApps.empty()) {
+        std::cerr << "[CHAOS] SPIKE: no OnOffApplication on RH idx " << rhIdx << std::endl;
+        return;
     }
+
+    Ptr<OnOffApplication> onOffApp = onOffApps[rand() % onOffApps.size()];
+    DataRate originalRate("50Mbps");
+    DataRate spikeRate("500Mbps");
+    const double duration = 5.0;
+
+    onOffApp->SetAttribute("DataRate", DataRateValue(spikeRate));
+    g_activeTrafficSpike = true;
+    g_trafficSpikeRhIdx = rhIdx;
+
+    std::cout << ">>> [EVENT-START @ " << Simulator::Now().GetSeconds()
+              << "s] TRAFFIC SPIKE on RH " << rhIdx
+              << " (duration=" << duration << "s)" << std::endl << std::flush;
+    std::cout << Simulator::Now().GetSeconds()
+              << "s: [STDOUT] Traffic spike degradation occurred on RH " << rhIdx << std::endl;
+
+    std::cerr << "\n"
+              << "╔════════════════════════════════════════════════════════════╗\n"
+              << "║  [EVENT] CHAOS TRAFFIC SPIKE TRIGGERED                     ║\n"
+              << "╠════════════════════════════════════════════════════════════╣\n"
+              << "║  Time: " << std::fixed << std::setprecision(2) << std::setw(48) << Simulator::Now().GetSeconds() << "s ║\n"
+              << "║  Remote Host Index: " << std::setw(38) << rhIdx << " ║\n"
+              << "║  Original Data Rate: " << std::setw(38) << "50 Mbps ║\n"
+              << "║  Spike Data Rate: " << std::setw(40) << "500 Mbps ║\n"
+              << "║  Duration: " << std::setprecision(0) << std::setw(45) << duration << "s ║\n"
+              << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
+    NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] Traffic Spike on RH " << rhIdx << " (500Mbps)");
+
+    Simulator::Schedule(Seconds(duration), [onOffApp, originalRate, rhIdx]() {
+        onOffApp->SetAttribute("DataRate", DataRateValue(originalRate));
+        g_activeTrafficSpike = false;
+        std::cout << ">>> [EVENT-END @ " << Simulator::Now().GetSeconds()
+                  << "s] TRAFFIC SPIKE on RH " << rhIdx << " cleared" << std::endl << std::flush;
+        std::cout << Simulator::Now().GetSeconds()
+                  << "s: [STDOUT] Traffic spike degradation ended on RH " << rhIdx << std::endl;
+        std::cerr << "\n"
+                  << "╔════════════════════════════════════════════════════════════╗\n"
+                  << "║  [EVENT] CHAOS TRAFFIC SPIKE ENDED                         ║\n"
+                  << "╚════════════════════════════════════════════════════════════╝\n" << std::endl;
+        NS_LOG_UNCOND(Simulator::Now().GetSeconds() << "s: [EVENT] Traffic Spike ended for RH " << rhIdx << " (restored to 50Mbps)");
+    });
 }
 
 static void PollChaosTrigger(NodeContainer ues, Ptr<Node> gnb, NodeContainer remoteHosts)
 {
+    static bool firstCall = true;
+    if (firstCall) {
+        std::cerr << "[CHAOS] PollChaosTrigger active — watching /tmp/chaos_trigger.txt every 1s" << std::endl;
+        firstCall = false;
+    }
+
     std::ifstream infile("/tmp/chaos_trigger.txt");
     if (infile.good()) {
         std::string command;
-        // Read the entire line instead of just the first word
         std::getline(infile, command);
         infile.close();
-        
         std::remove("/tmp/chaos_trigger.txt");
+
+        std::cerr << "[CHAOS] @ " << Simulator::Now().GetSeconds()
+                  << "s: received chaos command '" << command << "'" << std::endl;
 
         if (command.find("BLOCKAGE") != std::string::npos || command.find("PACKET_LOSS") != std::string::npos) {
             TriggerBlockageEvent(ues, gnb);
@@ -361,9 +428,12 @@ static void PollChaosTrigger(NodeContainer ues, Ptr<Node> gnb, NodeContainer rem
         else if (command.find("SPIKE") != std::string::npos) {
             TriggerTrafficSpikeEvent(remoteHosts);
         }
+        else {
+            std::cerr << "[CHAOS] Unknown command '" << command
+                      << "' (expected one of BLOCKAGE, PACKET_LOSS, SPIKE)" << std::endl;
+        }
     }
 
-    // Check again in 1 second
     if (Simulator::Now().GetSeconds() < g_simStopTime) {
         Simulator::Schedule(Seconds(1.0), &PollChaosTrigger, ues, gnb, remoteHosts);
     }

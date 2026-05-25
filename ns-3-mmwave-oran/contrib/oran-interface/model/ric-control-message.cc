@@ -99,56 +99,72 @@ RicControlMessage::ParseSimpleCommand(const std::string& json)
     std::string command;
     uint16_t nodeId = 0;
     double value = 0.0;
-    
+    std::string strValue;
+
     // Extract command
     size_t cmdPos = json.find("\"cmd\"");
     if (cmdPos != std::string::npos) {
         size_t valStart = json.find(":", cmdPos) + 1;
         size_t valEnd = json.find(",", valStart);
         if (valEnd == std::string::npos) valEnd = json.find("}", valStart);
-        
+
         std::string cmdStr = json.substr(valStart, valEnd - valStart);
         cmdStr.erase(0, cmdStr.find_first_not_of(" \"\t\r\n"));
         cmdStr.erase(cmdStr.find_last_not_of(" \"\t\r\n") + 1);
         command = cmdStr;
     }
-    
+
     // Extract nodeId
     size_t nodePos = json.find("\"node\"");
     if (nodePos != std::string::npos) {
         size_t valStart = json.find(":", nodePos) + 1;
         size_t valEnd = json.find(",", valStart);
         if (valEnd == std::string::npos) valEnd = json.find("}", valStart);
-        
+
         std::string valStr = json.substr(valStart, valEnd - valStart);
         try {
             nodeId = (uint16_t)std::stoi(valStr);
         } catch (...) {}
     }
-    
+
     // Extract value
     size_t valPos = json.find("\"txPowerDbm\"");
     if (valPos == std::string::npos) valPos = json.find("\"mcs\"");
     if (valPos == std::string::npos) valPos = json.find("\"bandwidth\"");
-    
+
     if (valPos != std::string::npos) {
         size_t valStart = json.find(":", valPos) + 1;
         size_t valEnd = json.find(",", valStart);
         if (valEnd == std::string::npos) valEnd = json.find("}", valStart);
-        
+
         std::string valStr = json.substr(valStart, valEnd - valStart);
         try {
             value = std::stod(valStr);
         } catch (...) {}
     }
-    
+
+    // Extract string payload (e.g. chaos "event":"SPIKE")
+    size_t evPos = json.find("\"event\"");
+    if (evPos != std::string::npos) {
+        size_t valStart = json.find(":", evPos) + 1;
+        size_t valEnd = json.find(",", valStart);
+        if (valEnd == std::string::npos) valEnd = json.find("}", valStart);
+
+        std::string evStr = json.substr(valStart, valEnd - valStart);
+        evStr.erase(0, evStr.find_first_not_of(" \"\t\r\n"));
+        evStr.erase(evStr.find_last_not_of(" \"\t\r\n") + 1);
+        strValue = evStr;
+    }
+
     if (!command.empty()) {
         ControlCommand cmd;
         cmd.type = command;
         cmd.targetId = nodeId;
         cmd.value = value;
+        cmd.strValue = strValue;
         m_commands.push_back(cmd);
-        NS_LOG_INFO("Parsed command: " << command << " for node " << nodeId << " value " << value);
+        NS_LOG_INFO("Parsed command: " << command << " for node " << nodeId
+                    << " value " << value << " strValue '" << strValue << "'");
     }
 }
 

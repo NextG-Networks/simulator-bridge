@@ -53,6 +53,7 @@ namespace ns3 {
         std::string type;
         uint16_t targetId;
         double value;
+        std::string strValue;  // For non-numeric payloads (e.g. chaos "event")
     };
 
     void ParseSimpleCommand(const std::string& json);
